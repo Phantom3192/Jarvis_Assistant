@@ -5,7 +5,15 @@ _client = None
 
 
 def get_client():
-    """Lazily create the Turso client using env vars."""
+    """Lazily create the Turso client using env vars.
+
+    Some hosts (bot-hosting.net included) block or mangle raw outbound
+    WebSocket connections, which is what the default `libsql://` scheme
+    uses. We force the HTTP-based hrana transport instead by rewriting
+    the scheme to `https://` — it works over plain HTTPS and is far more
+    firewall-friendly, at the cost of (negligible, for this bot) slightly
+    higher per-request latency vs. a persistent websocket.
+    """
     global _client
     if _client is None:
         url = os.environ.get("TURSO_DATABASE_URL")
@@ -15,6 +23,14 @@ def get_client():
                 "TURSO_DATABASE_URL is not set. Add it as an environment "
                 "variable on bot-hosting.net."
             )
+
+        if url.startswith("libsql://"):
+            url = "https://" + url[len("libsql://"):]
+        elif url.startswith("ws://"):
+            url = "http://" + url[len("ws://"):]
+        elif url.startswith("wss://"):
+            url = "https://" + url[len("wss://"):]
+
         _client = libsql_client.create_client(url=url, auth_token=token)
     return _client
 
