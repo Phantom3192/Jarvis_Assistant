@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import time
 import asyncio
@@ -55,6 +55,45 @@ async def start_scan_once():
     if not _scan_done:
         _scan_done = True
         await vanity.initial_scan(bot)
+
+
+# ---------------------------------------------------------------------------
+# Presence: keep the bot's status showing live member count
+# ---------------------------------------------------------------------------
+
+async def refresh_presence():
+    guild_id = vanity.cfg_int("guild_id")
+    guild = bot.get_guild(guild_id) if guild_id else None
+
+    if guild is None:
+        # No guild locked via !setguild yet — fall back to the first
+        # server the bot is in, since this bot is meant for one server.
+        guild = bot.guilds[0] if bot.guilds else None
+
+    member_count = guild.member_count if guild else 0
+    activity = discord.CustomActivity(name=f"J.A.R.V.I.S. : {member_count:,} members")
+    await bot.change_presence(activity=activity)
+
+
+@tasks.loop(minutes=10)
+async def presence_loop():
+    await refresh_presence()
+
+
+@bot.listen("on_ready")
+async def start_presence_loop():
+    if not presence_loop.is_running():
+        presence_loop.start()  # fires once immediately, then every 10 min
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    await refresh_presence()
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await refresh_presence()
 
 
 # ---------------------------------------------------------------------------
