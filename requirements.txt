@@ -1,0 +1,2 @@
+discord.py>=2.3.2
+libsql-client>=0.3.1
