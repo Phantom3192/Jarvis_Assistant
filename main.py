@@ -14,11 +14,24 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Only this Discord user ID can run the config commands below.
+# Replace 0 with your own Discord user ID (Developer Mode -> right-click
+# your name -> Copy User ID).
+OWNER_ID = 1049677357927125012
 
-def is_admin():
+
+def is_owner():
     async def predicate(ctx):
-        return ctx.author.guild_permissions.administrator
+        return ctx.author.id == OWNER_ID
     return commands.check(predicate)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("🚫 Only the bot owner can use this command.")
+    else:
+        raise error
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +114,7 @@ async def on_member_remove(member: discord.Member):
 # ---------------------------------------------------------------------------
 
 @bot.command(name="setvanity")
-@is_admin()
+@is_owner()
 async def setvanity(ctx, *, text: str):
     vanity.config["vanity_text"] = text
     await db.set_config("vanity_text", text)
@@ -109,7 +122,7 @@ async def setvanity(ctx, *, text: str):
 
 
 @bot.command(name="setrole")
-@is_admin()
+@is_owner()
 async def setrole(ctx, role: discord.Role):
     vanity.config["role_id"] = str(role.id)
     await db.set_config("role_id", role.id)
@@ -117,7 +130,7 @@ async def setrole(ctx, role: discord.Role):
 
 
 @bot.command(name="setlogchannel")
-@is_admin()
+@is_owner()
 async def setlogchannel(ctx, channel: discord.TextChannel):
     vanity.config["log_channel_id"] = str(channel.id)
     await db.set_config("log_channel_id", channel.id)
@@ -125,7 +138,7 @@ async def setlogchannel(ctx, channel: discord.TextChannel):
 
 
 @bot.command(name="setguild")
-@is_admin()
+@is_owner()
 async def setguild(ctx):
     vanity.config["guild_id"] = str(ctx.guild.id)
     await db.set_config("guild_id", ctx.guild.id)
@@ -133,7 +146,7 @@ async def setguild(ctx):
 
 
 @bot.command(name="vanityconfig")
-@is_admin()
+@is_owner()
 async def vanityconfig(ctx):
     role = ctx.guild.get_role(vanity.cfg_int("role_id"))
     channel = bot.get_channel(vanity.cfg_int("log_channel_id"))
