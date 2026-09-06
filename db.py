@@ -57,6 +57,20 @@ async def init_db():
         """
     )
 
+    # Migration: vanity_data existed before cycle_seconds was added.
+    # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
+    # older deployments are still missing this column — add it if needed.
+    # SQLite/libSQL has no "ADD COLUMN IF NOT EXISTS", so we just try and
+    # swallow the "duplicate column" error on databases that already have it.
+    try:
+        await client.execute(
+            "ALTER TABLE vanity_data ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0"
+        )
+        print("[db] Migrated vanity_data: added cycle_seconds column.")
+    except Exception as e:
+        if "duplicate column" not in str(e).lower():
+            print(f"[db] cycle_seconds migration check: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Config (vanity text, role id, log channel id, guild id)
