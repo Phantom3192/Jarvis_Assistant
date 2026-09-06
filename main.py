@@ -210,6 +210,25 @@ async def testreward(ctx, member: discord.Member = None, amount: int = None):
     await ctx.send("✅ Test complete — check the log channel and the target user's DMs.")
 
 
+@bot.command(name="resetvanitydata")
+@is_owner()
+async def resetvanitydata(ctx, confirm: str = None):
+    """-resetvanitydata confirm — owner-only. Wipes everyone's vanity
+    data (active status, session timers, lifetime totals, cycle
+    progress) so tracking starts fresh for all users. Config (vanity
+    text, role, log channel, guild lock) is untouched. Requires typing
+    the literal word "confirm" to avoid a fat-finger wipe."""
+    if confirm != "confirm":
+        await ctx.send(
+            "⚠️ This wipes **every user's** vanity time and cycle progress "
+            "(config stays untouched). Run `-resetvanitydata confirm` if you're sure."
+        )
+        return
+
+    count = await db.reset_all_user_data()
+    await ctx.send(f"🗑️ Vanity data reset — cleared {count} user record(s). Config was left untouched.")
+
+
 @bot.command(name="vanitytime")
 async def vanitytime(ctx, member: discord.Member = None):
     member = member or ctx.author
