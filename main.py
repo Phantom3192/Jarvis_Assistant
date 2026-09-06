@@ -12,7 +12,7 @@ intents.members = True
 intents.presences = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="j.", intents=intents)
 
 # Only this Discord user ID can run the config commands below.
 # Replace 0 with your own Discord user ID (Developer Mode -> right-click
