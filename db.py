@@ -48,10 +48,11 @@ async def init_db():
     await client.execute(
         """
         CREATE TABLE IF NOT EXISTS vanity_data (
-            user_id TEXT PRIMARY KEY,
-            active INTEGER NOT NULL DEFAULT 0,
-            session_start REAL,
-            total_seconds REAL NOT NULL DEFAULT 0
+            user_id        TEXT PRIMARY KEY,
+            active         INTEGER NOT NULL DEFAULT 0,
+            session_start  REAL,
+            total_seconds  REAL NOT NULL DEFAULT 0,
+            cycle_seconds  REAL NOT NULL DEFAULT 0
         )
         """
     )
@@ -83,7 +84,7 @@ async def set_config(key: str, value) -> None:
 async def get_user(user_id: int) -> dict:
     client = get_client()
     rs = await client.execute(
-        "SELECT active, session_start, total_seconds FROM vanity_data WHERE user_id = ?",
+        "SELECT active, session_start, total_seconds, cycle_seconds FROM vanity_data WHERE user_id = ?",
         [str(user_id)],
     )
     if rs.rows:
@@ -92,21 +93,42 @@ async def get_user(user_id: int) -> dict:
             "active": bool(row[0]),
             "session_start": row[1],
             "total_seconds": row[2] or 0,
+            "cycle_seconds": row[3] or 0,
         }
-    return {"active": False, "session_start": None, "total_seconds": 0}
+    return {"active": False, "session_start": None, "total_seconds": 0, "cycle_seconds": 0}
 
 
-async def upsert_user(user_id: int, active: bool, session_start, total_seconds: float) -> None:
+async def upsert_user(user_id: int, active: bool, session_start, total_seconds: float, cycle_seconds: float) -> None:
     client = get_client()
     await client.execute(
-        "INSERT INTO vanity_data (user_id, active, session_start, total_seconds) "
-        "VALUES (?, ?, ?, ?) "
+        "INSERT INTO vanity_data (user_id, active, session_start, total_seconds, cycle_seconds) "
+        "VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET "
         "active = excluded.active, "
         "session_start = excluded.session_start, "
-        "total_seconds = excluded.total_seconds",
-        [str(user_id), int(active), session_start, total_seconds],
+        "total_seconds = excluded.total_seconds, "
+        "cycle_seconds = excluded.cycle_seconds",
+        [str(user_id), int(active), session_start, total_seconds, cycle_seconds],
     )
+
+
+async def get_active_users() -> list[dict]:
+    """All users currently tracked as active (vanity present). Used by the
+    periodic cycle-progress check so rewards can fire without waiting for
+    someone to remove their vanity."""
+    client = get_client()
+    rs = await client.execute(
+        "SELECT user_id, session_start, total_seconds, cycle_seconds FROM vanity_data WHERE active = 1"
+    )
+    return [
+        {
+            "user_id": int(row[0]),
+            "session_start": row[1],
+            "total_seconds": row[2] or 0,
+            "cycle_seconds": row[3] or 0,
+        }
+        for row in rs.rows
+    ]
 
 
 async def close():
