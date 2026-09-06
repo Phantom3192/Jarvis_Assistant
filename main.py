@@ -6,18 +6,19 @@ import asyncio
 
 import db
 import vanity
+import webhook
 
 intents = discord.Intents.default()
 intents.members = True
 intents.presences = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="j.", intents=intents)
+bot = commands.Bot(command_prefix="-", intents=intents)
 
 # Only this Discord user ID can run the config commands below.
 # Replace 0 with your own Discord user ID (Developer Mode -> right-click
 # your name -> Copy User ID).
-OWNER_ID = 1049677357927125012
+OWNER_ID = 0
 
 
 def is_owner():
@@ -110,6 +111,22 @@ async def on_member_remove(member: discord.Member):
 
 
 # ---------------------------------------------------------------------------
+# 24h vanity → JC reward cycle (checked periodically so it fires even if
+# someone never removes their vanity link)
+# ---------------------------------------------------------------------------
+
+@tasks.loop(minutes=1)
+async def cycle_reward_loop():
+    await vanity.check_cycle_progress(bot)
+
+
+@bot.listen("on_ready")
+async def start_cycle_reward_loop():
+    if not cycle_reward_loop.is_running():
+        cycle_reward_loop.start()
+
+
+# ---------------------------------------------------------------------------
 # Admin commands (configure the bot without editing files)
 # ---------------------------------------------------------------------------
 
@@ -163,12 +180,23 @@ async def vanitytime(ctx, member: discord.Member = None):
     member = member or ctx.author
     udata = await db.get_user(member.id)
     total = udata["total_seconds"]
+    cycle = udata["cycle_seconds"]
     if udata["active"]:
-        total += time.time() - udata["session_start"]
+        elapsed = time.time() - udata["session_start"]
+        total += elapsed
+        cycle += elapsed
+    remaining = max(0, vanity.REWARD_THRESHOLD_SECONDS - cycle)
     embed = discord.Embed(
-        title="🎉 Total Vanity Time",
-        description=f"{member.mention} has had the vanity link for **{vanity.format_duration(total)}** total.",
+        title="🎉 Vanity Time",
+        description=f"{member.mention}'s vanity stats:",
         color=discord.Color.gold(),
+    )
+    embed.add_field(name="Total (lifetime)", value=vanity.format_duration(total), inline=True)
+    embed.add_field(name="Current 24h cycle", value=vanity.format_duration(cycle), inline=True)
+    embed.add_field(
+        name="Next reward in",
+        value=vanity.format_duration(remaining) if remaining > 0 else "Any moment now 🎁",
+        inline=True,
     )
     embed.set_thumbnail(url=member.display_avatar.url)
     await ctx.send(embed=embed)
@@ -192,6 +220,7 @@ async def main():
     try:
         await bot.start(token)
     finally:
+        await webhook.close_session()
         await db.close()
 
 
