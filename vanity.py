@@ -68,11 +68,12 @@ async def send_log_embed(bot, member: discord.Member, added: bool, session_secon
 
     role = member.guild.get_role(cfg_int("role_id"))
     role_mention = role.mention if role else "*(role not configured)*"
+    vanity_text = config.get("vanity_text") or "your vanity link"
 
     if added:
         embed = discord.Embed(
             title="✅ Vanity Added — Role Given",
-            description=f"**{member}** added `{config['vanity_text']}` to their status.",
+            description=f'**{member}** added "{vanity_text}" to their status.',
             color=discord.Color.green(),
         )
         embed.add_field(name="👥 User", value=f"{member.mention} (`{member}`)", inline=False)
@@ -80,7 +81,7 @@ async def send_log_embed(bot, member: discord.Member, added: bool, session_secon
     else:
         embed = discord.Embed(
             title="❌ Vanity Removed — Role Taken",
-            description=f"**{member}** removed `{config['vanity_text']}` from their status.",
+            description=f'**{member}** removed "{vanity_text}" from their status.',
             color=discord.Color.red(),
         )
         embed.add_field(name="👥 User", value=f"{member.mention} (`{member}`)", inline=False)
@@ -128,12 +129,18 @@ async def dm_reward_success(member: discord.Member, amount: int) -> bool:
     """DM the user congratulating them on the reward. Returns False (and
     stays silent otherwise) if their DMs are closed — that's common and
     not worth alarming anyone in the log channel over."""
+    vanity_text = config.get("vanity_text") or "your vanity link"
+    # Quotes instead of backticks: a backtick around an EMPTY vanity_text
+    # leaves Discord's markdown with only one real delimiter, so it pairs
+    # up with the next unrelated backtick later in the message (the one
+    # around !balance) and swallows everything between them into one
+    # giant inline-code block. Quotes don't have that failure mode.
     embed = discord.Embed(
         title="🎉 24h Vanity Reward!",
         description=(
-            f"You kept `{config['vanity_text']}` in your status for a full 24 hours "
+            f'You kept "{vanity_text}" in your status for a full 24 hours '
             f"and earned **{amount:,} JC**! It's already in your Jarvis balance — "
-            f"check with `!balance`.\n\nKeep it up — your next 24h cycle just started."
+            f"check with !balance.\n\nKeep it up — your next 24h cycle just started."
         ),
         color=discord.Color.gold(),
     )
