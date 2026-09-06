@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix="-", intents=intents)
 # Only this Discord user ID can run the config commands below.
 # Replace 0 with your own Discord user ID (Developer Mode -> right-click
 # your name -> Copy User ID).
-OWNER_ID = 0
+OWNER_ID = 1049677357927125012
 
 
 def is_owner():
