@@ -4,7 +4,7 @@ import discord
 import db
 
 DEFAULT_CONFIG = {
-    "vanity_text": ".gg/mysticverse",
+    "vanity_text": "",
     "role_id": "0",
     "log_channel_id": "0",
     "guild_id": "0",
