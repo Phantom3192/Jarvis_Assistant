@@ -145,6 +145,18 @@ async def get_active_users() -> list[dict]:
     ]
 
 
+async def reset_all_user_data() -> int:
+    """Wipe every row from vanity_data (active status, session timers,
+    lifetime totals, cycle progress) for ALL users. Config (vanity text,
+    role, log channel, guild lock) is untouched — a separate table.
+    Returns the number of rows deleted."""
+    client = get_client()
+    rs = await client.execute("SELECT COUNT(*) FROM vanity_data")
+    count = rs.rows[0][0] if rs.rows else 0
+    await client.execute("DELETE FROM vanity_data")
+    return count
+
+
 async def close():
     global _client
     if _client is not None:
