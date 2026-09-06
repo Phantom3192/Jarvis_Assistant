@@ -124,9 +124,32 @@ async def send_reward_embed(bot, member: discord.Member, amount: int, delivered:
     await channel.send(embed=embed)
 
 
-async def _grant_cycle_reward(bot, member: discord.Member):
-    delivered = await webhook.send_jc_reward(member.id, REWARD_AMOUNT_JC, reason="vanity_24h")
-    await send_reward_embed(bot, member, REWARD_AMOUNT_JC, delivered)
+async def dm_reward_success(member: discord.Member, amount: int) -> bool:
+    """DM the user congratulating them on the reward. Returns False (and
+    stays silent otherwise) if their DMs are closed — that's common and
+    not worth alarming anyone in the log channel over."""
+    embed = discord.Embed(
+        title="🎉 24h Vanity Reward!",
+        description=(
+            f"You kept `{config['vanity_text']}` in your status for a full 24 hours "
+            f"and earned **{amount:,} JC**! It's already in your Jarvis balance — "
+            f"check with `!balance`.\n\nKeep it up — your next 24h cycle just started."
+        ),
+        color=discord.Color.gold(),
+    )
+    try:
+        await member.send(embed=embed)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def grant_cycle_reward(bot, member: discord.Member, amount: int = None):
+    amount = REWARD_AMOUNT_JC if amount is None else amount
+    delivered = await webhook.send_jc_reward(member.id, amount, reason="vanity_24h")
+    await send_reward_embed(bot, member, amount, delivered)
+    if delivered:
+        await dm_reward_success(member, amount)
 
 
 async def apply_vanity_added(bot, member: discord.Member):
@@ -177,7 +200,7 @@ async def apply_vanity_removed(bot, member: discord.Member):
     await send_log_embed(bot, member, added=False, session_seconds=session_seconds, total_seconds=new_total)
 
     if rewarded:
-        await _grant_cycle_reward(bot, member)
+        await grant_cycle_reward(bot, member)
 
 
 async def check_cycle_progress(bot):
@@ -216,7 +239,7 @@ async def check_cycle_progress(bot):
             continue
 
         for _ in range(rewards_earned):
-            await _grant_cycle_reward(bot, member)
+            await grant_cycle_reward(bot, member)
 
 
 async def load_config_from_db():
