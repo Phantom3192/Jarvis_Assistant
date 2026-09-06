@@ -175,6 +175,22 @@ async def vanityconfig(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="testreward")
+@is_owner()
+async def testreward(ctx, member: discord.Member = None, amount: int = None):
+    """!testreward [@user] [amount] — owner-only. Manually fires the full
+    reward flow (webhook call to Jarvis + log embed + DM) without waiting
+    for a real 24h cycle. Defaults to yourself and the normal reward
+    amount if not specified. Does NOT touch the user's actual cycle
+    progress in the DB — it's purely for testing the Jarvis connection
+    and DM delivery."""
+    member = member or ctx.author
+    test_amount = amount if amount is not None else vanity.REWARD_AMOUNT_JC
+    await ctx.send(f"🧪 Testing reward flow for {member.mention} — {test_amount:,} JC...")
+    await vanity.grant_cycle_reward(bot, member, amount=test_amount)
+    await ctx.send("✅ Test complete — check the log channel and the target user's DMs.")
+
+
 @bot.command(name="vanitytime")
 async def vanitytime(ctx, member: discord.Member = None):
     member = member or ctx.author
