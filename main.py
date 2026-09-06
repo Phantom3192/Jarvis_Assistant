@@ -29,10 +29,29 @@ def is_owner():
 
 @bot.event
 async def on_command_error(ctx, error):
+    # Unwrap discord.py's wrapper so isinstance checks below see the real
+    # error, not a generic CommandInvokeError shell around it.
+    error = getattr(error, "original", error)
+
+    if isinstance(error, commands.CommandNotFound):
+        return  # someone typo'd a command or another bot shares the "-" prefix — stay quiet
     if isinstance(error, commands.CheckFailure):
         await ctx.send("🚫 Only the bot owner can use this command.")
-    else:
-        raise error
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ Missing an argument: `{error.param.name}`. Check the command's usage.")
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(f"⚠️ Couldn't understand one of the arguments: {error}")
+        return
+
+    # Anything else is unexpected — log the full traceback to console for
+    # debugging, but ALWAYS tell the user something went wrong instead of
+    # silently doing nothing, which is what re-raising here used to do.
+    print(f"[on_command_error] Unhandled error in command '{ctx.command}': {error!r}")
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+    await ctx.send(f"❌ Something went wrong running that command: `{error}`")
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +99,7 @@ async def refresh_presence():
     guild = bot.get_guild(guild_id) if guild_id else None
 
     if guild is None:
-        # No guild locked via !setguild yet — fall back to the first
+        # No guild locked via -setguild yet — fall back to the first
         # server the bot is in, since this bot is meant for one server.
         guild = bot.guilds[0] if bot.guilds else None
 
@@ -178,7 +197,7 @@ async def vanityconfig(ctx):
 @bot.command(name="testreward")
 @is_owner()
 async def testreward(ctx, member: discord.Member = None, amount: int = None):
-    """!testreward [@user] [amount] — owner-only. Manually fires the full
+    """-testreward [@user] [amount] — owner-only. Manually fires the full
     reward flow (webhook call to Jarvis + log embed + DM) without waiting
     for a real 24h cycle. Defaults to yourself and the normal reward
     amount if not specified. Does NOT touch the user's actual cycle
