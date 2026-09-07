@@ -20,7 +20,7 @@ config = dict(DEFAULT_CONFIG)
 # whenever vanity is removed and resuming from the same point when it's
 # added back) to earn a JC reward from Jarvis. Hardcoded per request —
 # edit these two constants directly to change the cycle.
-REWARD_THRESHOLD_SECONDS = 24 * 60 * 60  # 24 hours
+REWARD_THRESHOLD_SECONDS = 12 * 60 * 60  # 12 hours
 REWARD_AMOUNT_JC = 1000
 
 
