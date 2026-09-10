@@ -16,18 +16,18 @@ doesn't leave a misleading name behind.
 # ---------------------------------------------------------------------------
 # Generic status / feedback — used everywhere for command responses
 # ---------------------------------------------------------------------------
-SUCCESS   = "<a:tick:991381528129052712>"   # something worked
-ERROR     = "<a:error:1129730436462030918>"   # something failed / was removed
+SUCCESS   = "<a:tick:1547570094186561576>"   # something worked
+ERROR     = "<a:error:1547577406037172355>"   # something failed / was removed
 WARNING   = "⚠️"   # non-fatal problem, bad input, delivery failure
 DENIED    = "🚫"   # permission check failed (owner-only commands)
 DELETE    = "🗑️"   # destructive action confirmation (resetvanitydata)
 CONFIG    = "⚙️"   # config/settings display
 LOCKED    = "🔒"   # gated behind a requirement (vanity time, etc.)
-PENDING   = "<:pending:731387367520206898>"   # still in progress, not done yet
+PENDING   = "<:pending:1547574726468042904>"   # still in progress, not done yet
 TEST      = "🧪"   # test/debug commands
-CELEBRATE = "<a:giveaway:1532957062084956220>"   # rewards, claims, milestones
-GIFT      = "<a:gifts:1530981382757683271>"   # anything reward/box related
-USER      = "👥"   # "user" field label in log embeds
+CELEBRATE = "<a:giveaway:1547569452470632458>"   # rewards, claims, milestones
+GIFT      = "<a:gifts:1547574389338415185>"   # anything reward/box related
+USER      = "<a:users:1547575226148200552>"   # "user" field label in log embeds
 
 # ---------------------------------------------------------------------------
 # Currency — Jarvis Credits (JC), the bot's single reward currency
@@ -50,7 +50,7 @@ QUEST_TYPE = "🌸"   # "quest" field label in the claim log embed
 # ---------------------------------------------------------------------------
 # Help menu (-help / -adminhelp)
 # ---------------------------------------------------------------------------
-HELP_BOOK        = "📖"   # -help title
+HELP_BOOK        = "<a:diamond_black:1547569545726926990>"   # -help title
 HELP_TOOLS       = "🛠️"   # -adminhelp title
 HELP_HOME        = "🏠"   # dropdown "back to overview" option
 CAT_VANITY       = "🎉"   # "Vanity & Rewards" category
