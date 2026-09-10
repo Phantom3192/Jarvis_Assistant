@@ -9,18 +9,26 @@ import vanity
 import webhook
 import quests
 import boxes
+import help_menu
 
 intents = discord.Intents.default()
 intents.members = True
 intents.presences = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="-", intents=intents)
+# help_command=None: we register our own -help (and -adminhelp) via
+# help_menu.setup_help() below, so the library's default plain-text help
+# is turned off to avoid clashing with it.
+bot = commands.Bot(command_prefix="-", intents=intents, help_command=None)
 
 # Only this Discord user ID can run the config commands below.
 # Replace 0 with your own Discord user ID (Developer Mode -> right-click
 # your name -> Copy User ID).
 OWNER_ID = 1049677357927125012
+
+# Registers -help (all members) and -adminhelp (owner only) — embed +
+# dropdown category browser, see help_menu.py.
+help_menu.setup_help(bot, OWNER_ID)
 
 
 def is_owner():
