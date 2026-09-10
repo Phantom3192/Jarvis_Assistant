@@ -3,6 +3,7 @@ import discord
 
 import db
 import webhook
+import emoji
 
 DEFAULT_CONFIG = {
     "vanity_text": "",
@@ -85,22 +86,22 @@ async def send_log_embed(bot, member: discord.Member, added: bool, session_secon
 
     if added:
         embed = discord.Embed(
-            title="✅ Vanity Added — Role Given",
+            title=f"{emoji.SUCCESS} Vanity Added — Role Given",
             description=f'**{member}** added "{vanity_text}" to their status.',
             color=discord.Color.green(),
         )
-        embed.add_field(name="👥 User", value=f"{member.mention} (`{member}`)", inline=False)
-        embed.add_field(name="🎖️ Role Given", value=role_mention, inline=False)
+        embed.add_field(name=f"{emoji.USER} User", value=f"{member.mention} (`{member}`)", inline=False)
+        embed.add_field(name=f"{emoji.ROLE_GIVEN} Role Given", value=role_mention, inline=False)
     else:
         embed = discord.Embed(
-            title="❌ Vanity Removed — Role Taken",
+            title=f"{emoji.ERROR} Vanity Removed — Role Taken",
             description=f'**{member}** removed "{vanity_text}" from their status.',
             color=discord.Color.red(),
         )
-        embed.add_field(name="👥 User", value=f"{member.mention} (`{member}`)", inline=False)
-        embed.add_field(name="❌ Role Taken", value=role_mention, inline=True)
-        embed.add_field(name="⏱️ Session Duration", value=format_duration(session_seconds or 0), inline=True)
-        embed.add_field(name="🎉 Total Vanity Time", value=format_duration(total_seconds), inline=True)
+        embed.add_field(name=f"{emoji.USER} User", value=f"{member.mention} (`{member}`)", inline=False)
+        embed.add_field(name=f"{emoji.ERROR} Role Taken", value=role_mention, inline=True)
+        embed.add_field(name=f"{emoji.SESSION_DURATION} Session Duration", value=format_duration(session_seconds or 0), inline=True)
+        embed.add_field(name=f"{emoji.CELEBRATE} Total Vanity Time", value=format_duration(total_seconds), inline=True)
 
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(text=f"User ID: {member.id}")
@@ -119,13 +120,13 @@ async def send_reward_embed(bot, member: discord.Member, amount: int, delivered:
 
     if delivered:
         embed = discord.Embed(
-            title="🎉 24h Vanity Reward",
+            title=f"{emoji.CELEBRATE} 24h Vanity Reward",
             description=f"**{member}** completed a full 24h vanity cycle and earned **{amount:,} JC**!",
             color=discord.Color.gold(),
         )
     else:
         embed = discord.Embed(
-            title="⚠️ 24h Vanity Reward — Delivery Failed",
+            title=f"{emoji.WARNING} 24h Vanity Reward — Delivery Failed",
             description=(
                 f"**{member}** completed a 24h vanity cycle, but Jarvis didn't "
                 f"accept the reward call. Check `JARVIS_WEBHOOK_URL`/`JARVIS_WEBHOOK_SECRET`."
@@ -149,7 +150,7 @@ async def dm_reward_success(member: discord.Member, amount: int) -> bool:
     # around !balance) and swallows everything between them into one
     # giant inline-code block. Quotes don't have that failure mode.
     embed = discord.Embed(
-        title="🎉 24h Vanity Reward!",
+        title=f"{emoji.CELEBRATE} 24h Vanity Reward!",
         description=(
             f'You kept "{vanity_text}" in your status for a full 24 hours '
             f"and earned **{amount:,} JC**! It's already in your Jarvis balance — "
