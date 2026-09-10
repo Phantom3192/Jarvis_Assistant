@@ -84,6 +84,14 @@ async def init_db():
         )
         """
     )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS box_drops (
+            user_id    TEXT PRIMARY KEY,
+            last_drop  REAL NOT NULL DEFAULT 0
+        )
+        """
+    )
 
     # Migrations: vanity_data existed before these columns were added.
     # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
@@ -305,6 +313,30 @@ async def mark_quest_claimed(user_id: int) -> None:
     await client.execute(
         "UPDATE quest_data SET claimed = 1 WHERE user_id = ?",
         [str(user_id)],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Random box drops (chat-triggered, cooldown-gated)
+# ---------------------------------------------------------------------------
+
+async def get_last_box_drop(user_id: int) -> float:
+    client = get_client()
+    rs = await client.execute(
+        "SELECT last_drop FROM box_drops WHERE user_id = ?",
+        [str(user_id)],
+    )
+    if rs.rows:
+        return rs.rows[0][0] or 0
+    return 0
+
+
+async def set_last_box_drop(user_id: int, timestamp: float) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO box_drops (user_id, last_drop) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET last_drop = excluded.last_drop",
+        [str(user_id), timestamp],
     )
 
 
