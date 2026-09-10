@@ -52,7 +52,7 @@ QUEST_ICONS = {
     "open_box": "<a:gifts:1547574389338415185>",
 }
 
-NOT_DONE = "❌"  # binary (target == 1) quest, not completed yet
+NOT_DONE = "<a:denied:1547577406037172355>"  # binary (target == 1) quest, not completed yet
 
 
 def _progress_bar(current: int, target: int, length: int = 10) -> str:
