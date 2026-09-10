@@ -214,7 +214,7 @@ async def status_embed(member: discord.Member) -> discord.Embed:
                 status_line = f"{emoji.GIFT} Ready! Run `-claimquest {quest_id}` (or `-claimquest`)."
             else:
                 remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
-                status_line = f"{emoji.GIFT} Done, but needs {vanity.format_duration(remaining)} more vanity time today."
+                status_line = f"{emoji.GIFT}"
             value = f"{status_line}\n{reward_line}"
         elif qdef["target"] == 1:
             value = f"{NOT_DONE} Not completed yet\n{reward_line}"
