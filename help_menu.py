@@ -18,6 +18,8 @@ here for this bot's actual command set.
 """
 import discord
 
+import emoji
+
 
 # ---------------------------------------------------------------------------
 # Command catalog
@@ -28,7 +30,7 @@ import discord
 PUBLIC_CATEGORIES = [
     {
         "key": "vanity",
-        "emoji": "🎉",
+        "emoji": emoji.CAT_VANITY,
         "label": "Vanity & Rewards",
         "blurb": "Check your vanity time and reward cycle progress.",
         "commands": [
@@ -39,7 +41,7 @@ PUBLIC_CATEGORIES = [
     },
     {
         "key": "quests",
-        "emoji": "📜",
+        "emoji": emoji.CAT_QUESTS,
         "label": "Quests",
         "blurb": "Daily quests and claiming your rewards.",
         "commands": [
@@ -57,7 +59,7 @@ PUBLIC_CATEGORIES = [
 ADMIN_CATEGORIES = [
     {
         "key": "vanity_setup",
-        "emoji": "🎭",
+        "emoji": emoji.CAT_VANITY_SETUP,
         "label": "Vanity Setup",
         "blurb": "Configure the vanity text, role, log channel and tracked server.",
         "commands": [
@@ -75,7 +77,7 @@ ADMIN_CATEGORIES = [
     },
     {
         "key": "testing",
-        "emoji": "🧪",
+        "emoji": emoji.CAT_TESTING,
         "label": "Testing & Data",
         "blurb": "Manually trigger rewards and manage stored vanity data.",
         "commands": [
@@ -90,7 +92,7 @@ ADMIN_CATEGORIES = [
     },
     {
         "key": "quest_setup",
-        "emoji": "📋",
+        "emoji": emoji.CAT_QUEST_SETUP,
         "label": "Quest Setup",
         "blurb": "Configure where quest completions and claims get logged.",
         "commands": [
@@ -144,7 +146,7 @@ class _CategorySelect(discord.ui.Select):
 
         options = [
             discord.SelectOption(
-                label="Home", description="Back to the overview", emoji="🏠", value="__home__",
+                label="Home", description="Back to the overview", emoji=emoji.HELP_HOME, value="__home__",
             )
         ] + [
             discord.SelectOption(
@@ -199,7 +201,7 @@ def setup_help(bot, owner_id: int):
         """-help — lists every command available to members."""
         footer = f"Prefix: {prefix}  •  Bot owner: {prefix}adminhelp"
         embed = _build_home_embed(
-            title="📖 J.A.R.V.I.S. Help",
+            title=f"{emoji.HELP_BOOK} J.A.R.V.I.S. Help",
             description="Here's what I can do. Pick a category below to see the commands.",
             categories=PUBLIC_CATEGORIES,
             color=discord.Color.blurple(),
@@ -212,12 +214,12 @@ def setup_help(bot, owner_id: int):
     async def adminhelp_cmd(ctx):
         """-adminhelp — owner-only. Lists owner config/testing commands."""
         if ctx.author.id != owner_id:
-            await ctx.send("🚫 Only the bot owner can use this command.")
+            await ctx.send(f"{emoji.DENIED} Only the bot owner can use this command.")
             return
 
         footer = f"Prefix: {prefix}  •  Bot owner only"
         embed = _build_home_embed(
-            title="🛠️ Admin Commands",
+            title=f"{emoji.HELP_TOOLS} Admin Commands",
             description=(
                 "Owner-only config and testing utilities. These won't work "
                 "for anyone but the bot owner."
