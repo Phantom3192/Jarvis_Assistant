@@ -43,15 +43,15 @@ DISBOARD_BOT_ID = 302050872383242240
 # where baseline is snapshotted the moment the quest is assigned.
 QUEST_DEFS: dict[str, dict] = {
     "chat150": {
-        "desc": "Send 150 Messages",
-        "target": 150,
-        "reward": 100_000,
+        "desc": "Send 200 Messages",
+        "target": 200,
+        "reward": 2_000,
         "get": lambda counters: counters["messages"],
     },
     "bump_server": {
         "desc": "Bump the Server",
         "target": 1,
-        "reward": 15_000,
+        "reward": 1_000,
         "get": lambda counters: counters["bumps"],
     },
 }
