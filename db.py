@@ -63,6 +63,9 @@ async def init_db():
         )
         """
     )
+    # Legacy single-quest-per-user table. No longer written to (see
+    # quest_progress below, which tracks all quest types independently),
+    # kept only so older deployments don't error out on startup.
     await client.execute(
         """
         CREATE TABLE IF NOT EXISTS quest_data (
@@ -72,6 +75,19 @@ async def init_db():
             assigned_date  TEXT NOT NULL,
             completed      INTEGER NOT NULL DEFAULT 0,
             claimed        INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_progress (
+            user_id        TEXT NOT NULL,
+            quest_id       TEXT NOT NULL,
+            baseline       INTEGER NOT NULL DEFAULT 0,
+            assigned_date  TEXT NOT NULL,
+            completed      INTEGER NOT NULL DEFAULT 0,
+            claimed        INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, quest_id)
         )
         """
     )
@@ -267,35 +283,41 @@ async def increment_quest_box_count(user_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-user daily quest (assigned, tracked, completed, then claimed)
+# Per-user daily quest progress — ALL quest types are active for every
+# user at once (one row per user per quest_id), each tracked/completed/
+# claimed independently. Replaces the old single-quest-per-user quest_data
+# table above.
 # ---------------------------------------------------------------------------
 
-async def get_quest(user_id: int):
+async def get_all_quests(user_id: int) -> dict:
+    """Returns {quest_id: entry} for every quest row this user currently
+    has on file (may be missing entries for quest types never assigned
+    yet, or stale entries from a previous day — the caller, quests.py's
+    _ensure_quests(), is responsible for filling/refreshing those)."""
     client = get_client()
     rs = await client.execute(
         "SELECT quest_id, baseline, assigned_date, completed, claimed "
-        "FROM quest_data WHERE user_id = ?",
+        "FROM quest_progress WHERE user_id = ?",
         [str(user_id)],
     )
-    if not rs.rows:
-        return None
-    row = rs.rows[0]
     return {
-        "quest_id": row[0],
-        "baseline": row[1] or 0,
-        "assigned_date": row[2],
-        "completed": bool(row[3]),
-        "claimed": bool(row[4]),
+        row[0]: {
+            "quest_id": row[0],
+            "baseline": row[1] or 0,
+            "assigned_date": row[2],
+            "completed": bool(row[3]),
+            "claimed": bool(row[4]),
+        }
+        for row in rs.rows
     }
 
 
-async def assign_quest(user_id: int, quest_id: str, baseline: int, assigned_date: str) -> dict:
+async def assign_quest_progress(user_id: int, quest_id: str, baseline: int, assigned_date: str) -> dict:
     client = get_client()
     await client.execute(
-        "INSERT INTO quest_data (user_id, quest_id, baseline, assigned_date, completed, claimed) "
+        "INSERT INTO quest_progress (user_id, quest_id, baseline, assigned_date, completed, claimed) "
         "VALUES (?, ?, ?, ?, 0, 0) "
-        "ON CONFLICT(user_id) DO UPDATE SET "
-        "quest_id = excluded.quest_id, "
+        "ON CONFLICT(user_id, quest_id) DO UPDATE SET "
         "baseline = excluded.baseline, "
         "assigned_date = excluded.assigned_date, "
         "completed = 0, "
@@ -311,19 +333,19 @@ async def assign_quest(user_id: int, quest_id: str, baseline: int, assigned_date
     }
 
 
-async def mark_quest_completed(user_id: int) -> None:
+async def mark_quest_progress_completed(user_id: int, quest_id: str) -> None:
     client = get_client()
     await client.execute(
-        "UPDATE quest_data SET completed = 1 WHERE user_id = ?",
-        [str(user_id)],
+        "UPDATE quest_progress SET completed = 1 WHERE user_id = ? AND quest_id = ?",
+        [str(user_id), quest_id],
     )
 
 
-async def mark_quest_claimed(user_id: int) -> None:
+async def mark_quest_progress_claimed(user_id: int, quest_id: str) -> None:
     client = get_client()
     await client.execute(
-        "UPDATE quest_data SET claimed = 1 WHERE user_id = ?",
-        [str(user_id)],
+        "UPDATE quest_progress SET claimed = 1 WHERE user_id = ? AND quest_id = ?",
+        [str(user_id), quest_id],
     )
 
 
