@@ -75,7 +75,7 @@ async def maybe_drop(bot, member: discord.Member) -> None:
 
 
 async def _post_log(bot, member: discord.Member, amount: int, delivered: bool) -> None:
-    channel_id = vanity.cfg_int("log_channel_id")
+    channel_id = vanity.cfg_int("quest_log_channel_id")
     if not channel_id:
         return
     channel = bot.get_channel(channel_id)
