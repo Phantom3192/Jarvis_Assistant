@@ -19,7 +19,7 @@ doesn't leave a misleading name behind.
 SUCCESS   = "<a:tick:1547570094186561576>"   # something worked
 ERROR     = "<a:error:1547577406037172355>"   # something failed / was removed
 WARNING   = "⚠️"   # non-fatal problem, bad input, delivery failure
-DENIED    = "🚫"   # permission check failed (owner-only commands)
+DENIED    = "<a:error:1547577406037172355>"   # permission check failed (owner-only commands)
 DELETE    = "🗑️"   # destructive action confirmation (resetvanitydata)
 CONFIG    = "⚙️"   # config/settings display
 LOCKED    = "🔒"   # gated behind a requirement (vanity time, etc.)
@@ -39,7 +39,7 @@ JC_NAME = "Jarvis Credit"
 # Vanity system
 # ---------------------------------------------------------------------------
 ROLE_GIVEN       = "🎖️"
-SESSION_DURATION = "⏱️"
+SESSION_DURATION = "<a:clock_new:1547584940814770236>"
 
 # ---------------------------------------------------------------------------
 # Quests
@@ -53,8 +53,8 @@ QUEST_TYPE = "🌸"   # "quest" field label in the claim log embed
 HELP_BOOK        = "<a:diamond_black:1547569545726926990>"   # -help title
 HELP_TOOLS       = "🛠️"   # -adminhelp title
 HELP_HOME        = "🏠"   # dropdown "back to overview" option
-CAT_VANITY       = "🎉"   # "Vanity & Rewards" category
-CAT_QUESTS       = "📜"   # "Quests" category
+CAT_VANITY       = "<a:giveaway:1547569452470632458>"   # "Vanity & Rewards" category
+CAT_QUESTS       = "<a:target:1547585169060405368>"   # "Quests" category
 CAT_VANITY_SETUP = "🎭"   # "Vanity Setup" admin category
 CAT_TESTING      = "🧪"   # "Testing & Data" admin category
 CAT_QUEST_SETUP  = "📋"   # "Quest Setup" admin category
