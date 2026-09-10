@@ -22,7 +22,7 @@ config = dict(DEFAULT_CONFIG)
 # added back) to earn a JC reward from Jarvis. Hardcoded per request —
 # edit these two constants directly to change the cycle.
 REWARD_THRESHOLD_SECONDS = 12 * 60 * 60  # 12 hours
-REWARD_AMOUNT_JC = 1000
+REWARD_AMOUNT_JC = 2000
 
 
 def cfg_int(key: str) -> int:
