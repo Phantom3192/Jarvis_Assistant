@@ -8,6 +8,7 @@ import db
 import vanity
 import webhook
 import quests
+import boxes
 
 intents = discord.Intents.default()
 intents.members = True
@@ -83,8 +84,11 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
 @bot.event
 async def on_message(message: discord.Message):
     # Quest progress tracking (message count + bump detection) — see
-    # quests.py. This never blocks normal command handling below.
+    # quests.py — and random box drops — see boxes.py. Neither blocks
+    # normal command handling below.
     await quests.on_message_progress(bot, message)
+    if message.guild is not None and not message.author.bot:
+        await boxes.maybe_drop(bot, message.author)
     await bot.process_commands(message)
 
 
