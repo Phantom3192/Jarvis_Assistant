@@ -41,13 +41,15 @@ PUBLIC_CATEGORIES = [
         "key": "quests",
         "emoji": "📜",
         "label": "Quests",
-        "blurb": "Daily quests and claiming your reward.",
+        "blurb": "Daily quests and claiming your rewards.",
         "commands": [
             ("-quest [@user]",
-             "Show today's quest and its progress/claim status. Defaults to you."),
-            ("-claimquest",
-             "Claim today's completed quest. Requires at least 2h of vanity "
-             "time today."),
+             "Show ALL of today's quests at once, with each one's progress "
+             "and claim status. Defaults to you."),
+            ("-claimquest [quest_id]",
+             "Claim quest reward(s). Omit the ID to claim every quest that's "
+             "currently ready at once, or pass one (shown on -quest) to claim "
+             "just that quest. Requires at least 2h of vanity time today."),
         ],
     },
 ]
