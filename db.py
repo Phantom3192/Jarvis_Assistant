@@ -1,3 +1,4 @@
+import time
 import os
 import libsql_client
 
@@ -35,6 +36,12 @@ def get_client():
     return _client
 
 
+def today_str() -> str:
+    """Current UTC calendar date as YYYY-MM-DD — the day boundary used for
+    both vanity's 'today' total and quest assignment/claiming."""
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
 async def init_db():
     client = get_client()
     await client.execute(
@@ -56,24 +63,48 @@ async def init_db():
         )
         """
     )
-
-    # Migration: vanity_data existed before cycle_seconds was added.
-    # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
-    # older deployments are still missing this column — add it if needed.
-    # SQLite/libSQL has no "ADD COLUMN IF NOT EXISTS", so we just try and
-    # swallow the "duplicate column" error on databases that already have it.
-    try:
-        await client.execute(
-            "ALTER TABLE vanity_data ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0"
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_data (
+            user_id        TEXT PRIMARY KEY,
+            quest_id       TEXT NOT NULL,
+            baseline       INTEGER NOT NULL DEFAULT 0,
+            assigned_date  TEXT NOT NULL,
+            completed      INTEGER NOT NULL DEFAULT 0,
+            claimed        INTEGER NOT NULL DEFAULT 0
         )
-        print("[db] Migrated vanity_data: added cycle_seconds column.")
-    except Exception as e:
-        if "duplicate column" not in str(e).lower():
-            print(f"[db] cycle_seconds migration check: {e}")
+        """
+    )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_counters (
+            user_id   TEXT PRIMARY KEY,
+            messages  INTEGER NOT NULL DEFAULT 0,
+            bumps     INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+
+    # Migrations: vanity_data existed before these columns were added.
+    # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
+    # older deployments are still missing them — add if needed. SQLite/libSQL
+    # has no "ADD COLUMN IF NOT EXISTS", so we just try and swallow the
+    # "duplicate column" error on databases that already have it.
+    for ddl in (
+        "ALTER TABLE vanity_data ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE vanity_data ADD COLUMN day_date TEXT",
+        "ALTER TABLE vanity_data ADD COLUMN day_seconds REAL NOT NULL DEFAULT 0",
+    ):
+        try:
+            await client.execute(ddl)
+            print(f"[db] Migrated vanity_data: {ddl}")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower():
+                print(f"[db] migration check failed ({ddl}): {e}")
 
 
 # ---------------------------------------------------------------------------
-# Config (vanity text, role id, log channel id, guild id)
+# Config (vanity text, role id, log channel id, guild id, quest log channel)
 # ---------------------------------------------------------------------------
 
 async def get_all_config() -> dict:
@@ -98,7 +129,8 @@ async def set_config(key: str, value) -> None:
 async def get_user(user_id: int) -> dict:
     client = get_client()
     rs = await client.execute(
-        "SELECT active, session_start, total_seconds, cycle_seconds FROM vanity_data WHERE user_id = ?",
+        "SELECT active, session_start, total_seconds, cycle_seconds, day_date, day_seconds "
+        "FROM vanity_data WHERE user_id = ?",
         [str(user_id)],
     )
     if rs.rows:
@@ -108,31 +140,51 @@ async def get_user(user_id: int) -> dict:
             "session_start": row[1],
             "total_seconds": row[2] or 0,
             "cycle_seconds": row[3] or 0,
+            "day_date": row[4],
+            "day_seconds": row[5] or 0,
         }
-    return {"active": False, "session_start": None, "total_seconds": 0, "cycle_seconds": 0}
+    return {
+        "active": False,
+        "session_start": None,
+        "total_seconds": 0,
+        "cycle_seconds": 0,
+        "day_date": today_str(),
+        "day_seconds": 0,
+    }
 
 
-async def upsert_user(user_id: int, active: bool, session_start, total_seconds: float, cycle_seconds: float) -> None:
+async def upsert_user(
+    user_id: int,
+    active: bool,
+    session_start,
+    total_seconds: float,
+    cycle_seconds: float,
+    day_date: str,
+    day_seconds: float,
+) -> None:
     client = get_client()
     await client.execute(
-        "INSERT INTO vanity_data (user_id, active, session_start, total_seconds, cycle_seconds) "
-        "VALUES (?, ?, ?, ?, ?) "
+        "INSERT INTO vanity_data (user_id, active, session_start, total_seconds, cycle_seconds, day_date, day_seconds) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET "
         "active = excluded.active, "
         "session_start = excluded.session_start, "
         "total_seconds = excluded.total_seconds, "
-        "cycle_seconds = excluded.cycle_seconds",
-        [str(user_id), int(active), session_start, total_seconds, cycle_seconds],
+        "cycle_seconds = excluded.cycle_seconds, "
+        "day_date = excluded.day_date, "
+        "day_seconds = excluded.day_seconds",
+        [str(user_id), int(active), session_start, total_seconds, cycle_seconds, day_date, day_seconds],
     )
 
 
 async def get_active_users() -> list[dict]:
     """All users currently tracked as active (vanity present). Used by the
-    periodic cycle-progress check so rewards can fire without waiting for
-    someone to remove their vanity."""
+    periodic cycle-progress check so rewards (and today's vanity total)
+    stay fresh without waiting for someone to remove their vanity."""
     client = get_client()
     rs = await client.execute(
-        "SELECT user_id, session_start, total_seconds, cycle_seconds FROM vanity_data WHERE active = 1"
+        "SELECT user_id, session_start, total_seconds, cycle_seconds, day_date, day_seconds "
+        "FROM vanity_data WHERE active = 1"
     )
     return [
         {
@@ -140,6 +192,8 @@ async def get_active_users() -> list[dict]:
             "session_start": row[1],
             "total_seconds": row[2] or 0,
             "cycle_seconds": row[3] or 0,
+            "day_date": row[4],
+            "day_seconds": row[5] or 0,
         }
         for row in rs.rows
     ]
@@ -147,14 +201,111 @@ async def get_active_users() -> list[dict]:
 
 async def reset_all_user_data() -> int:
     """Wipe every row from vanity_data (active status, session timers,
-    lifetime totals, cycle progress) for ALL users. Config (vanity text,
-    role, log channel, guild lock) is untouched — a separate table.
-    Returns the number of rows deleted."""
+    lifetime totals, cycle progress, today's total) for ALL users. Config
+    (vanity text, role, log channel, guild lock) is untouched — a separate
+    table. Returns the number of rows deleted."""
     client = get_client()
     rs = await client.execute("SELECT COUNT(*) FROM vanity_data")
     count = rs.rows[0][0] if rs.rows else 0
     await client.execute("DELETE FROM vanity_data")
     return count
+
+
+# ---------------------------------------------------------------------------
+# Quest progress counters (lifetime, monotonically increasing — quest
+# progress is measured as counter - baseline, baseline snapshotted when a
+# quest is assigned)
+# ---------------------------------------------------------------------------
+
+async def get_quest_counters(user_id: int) -> dict:
+    client = get_client()
+    rs = await client.execute(
+        "SELECT messages, bumps FROM quest_counters WHERE user_id = ?",
+        [str(user_id)],
+    )
+    if rs.rows:
+        row = rs.rows[0]
+        return {"messages": row[0] or 0, "bumps": row[1] or 0}
+    return {"messages": 0, "bumps": 0}
+
+
+async def increment_quest_message_count(user_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO quest_counters (user_id, messages, bumps) VALUES (?, 1, 0) "
+        "ON CONFLICT(user_id) DO UPDATE SET messages = messages + 1",
+        [str(user_id)],
+    )
+
+
+async def increment_quest_bump_count(user_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO quest_counters (user_id, messages, bumps) VALUES (?, 0, 1) "
+        "ON CONFLICT(user_id) DO UPDATE SET bumps = bumps + 1",
+        [str(user_id)],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-user daily quest (assigned, tracked, completed, then claimed)
+# ---------------------------------------------------------------------------
+
+async def get_quest(user_id: int):
+    client = get_client()
+    rs = await client.execute(
+        "SELECT quest_id, baseline, assigned_date, completed, claimed "
+        "FROM quest_data WHERE user_id = ?",
+        [str(user_id)],
+    )
+    if not rs.rows:
+        return None
+    row = rs.rows[0]
+    return {
+        "quest_id": row[0],
+        "baseline": row[1] or 0,
+        "assigned_date": row[2],
+        "completed": bool(row[3]),
+        "claimed": bool(row[4]),
+    }
+
+
+async def assign_quest(user_id: int, quest_id: str, baseline: int, assigned_date: str) -> dict:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO quest_data (user_id, quest_id, baseline, assigned_date, completed, claimed) "
+        "VALUES (?, ?, ?, ?, 0, 0) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "quest_id = excluded.quest_id, "
+        "baseline = excluded.baseline, "
+        "assigned_date = excluded.assigned_date, "
+        "completed = 0, "
+        "claimed = 0",
+        [str(user_id), quest_id, baseline, assigned_date],
+    )
+    return {
+        "quest_id": quest_id,
+        "baseline": baseline,
+        "assigned_date": assigned_date,
+        "completed": False,
+        "claimed": False,
+    }
+
+
+async def mark_quest_completed(user_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "UPDATE quest_data SET completed = 1 WHERE user_id = ?",
+        [str(user_id)],
+    )
+
+
+async def mark_quest_claimed(user_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "UPDATE quest_data SET claimed = 1 WHERE user_id = ?",
+        [str(user_id)],
+    )
 
 
 async def close():
