@@ -26,9 +26,10 @@ import db
 import vanity
 import webhook
 import quests
+import emoji
 
-JC_EMOJI = "🪙"
-JC_NAME = "Jarvis Credit"
+JC_EMOJI = emoji.JC
+JC_NAME = emoji.JC_NAME
 
 BOX_COOLDOWN_SECONDS = 12 * 60 * 60  # 12h between drops per user
 BOX_DROP_CHANCE = 0.05  # chance per eligible message that a box drops
@@ -84,7 +85,7 @@ async def _post_log(bot, member: discord.Member, amount: int, delivered: bool) -
 
     if not delivered:
         embed = discord.Embed(
-            title="⚠️ Random Box — Delivery Failed",
+            title=f"{emoji.WARNING} Random Box — Delivery Failed",
             description=(
                 f"**{member}** found a box worth **{amount:,} JC**, but Jarvis "
                 f"didn't accept the reward call."
@@ -93,7 +94,7 @@ async def _post_log(bot, member: discord.Member, amount: int, delivered: bool) -
         )
     else:
         embed = discord.Embed(
-            title="🎁 Random Box Found!",
+            title=f"{emoji.GIFT} Random Box Found!",
             description=f"**{member}** stumbled on a surprise box worth **{amount:,} {JC_EMOJI} {JC_NAME}s**!",
             color=discord.Color.gold(),
         )
@@ -108,7 +109,7 @@ async def _post_log(bot, member: discord.Member, amount: int, delivered: bool) -
 
 async def _dm_success(member: discord.Member, amount: int) -> None:
     embed = discord.Embed(
-        title="🎁 Random Box Found!",
+        title=f"{emoji.GIFT} Random Box Found!",
         description=(
             f"You stumbled on a surprise box worth **{amount:,} JC**! "
             f"It's already in your Jarvis balance — check with !balance."
