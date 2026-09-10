@@ -186,7 +186,7 @@ async def status_embed(member: discord.Member) -> discord.Embed:
         else:
             prog = _quest_progress(entry, qdef, counters)
             value = f"{prog}/{qdef['target']} — reward: {qdef['reward']:,} {JC_EMOJI}"
-        embed.add_field(name=f"{qdef['desc']}  (`{quest_id}`)", value=value, inline=False)
+        embed.add_field(name=qdef["desc"], value=value, inline=False)
 
     embed.set_thumbnail(url=member.display_avatar.url)
     return embed
