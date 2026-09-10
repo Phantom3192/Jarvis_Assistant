@@ -9,6 +9,7 @@ DEFAULT_CONFIG = {
     "role_id": "0",
     "log_channel_id": "0",
     "guild_id": "0",
+    "quest_log_channel_id": "0",
 }
 
 # In-memory cache of config, loaded from DB at startup and kept in sync
@@ -56,6 +57,18 @@ def has_vanity(member: discord.Member) -> bool:
             if vanity_text in activity.name.lower():
                 return True
     return False
+
+
+async def get_today_vanity_seconds(user_id: int) -> float:
+    """Vanity time accumulated today (UTC calendar day), including any
+    currently-active session's live elapsed time. Used by the quest
+    system's 2h-vanity-today claim gate — see quests.py."""
+    udata = await db.get_user(user_id)
+    today = db.today_str()
+    seconds = udata["day_seconds"] if udata["day_date"] == today else 0
+    if udata["active"] and udata["session_start"]:
+        seconds += time.time() - udata["session_start"]
+    return seconds
 
 
 async def send_log_embed(bot, member: discord.Member, added: bool, session_seconds, total_seconds: float):
@@ -165,7 +178,11 @@ async def apply_vanity_added(bot, member: discord.Member):
         return  # already tracked as active, avoid double-trigger
 
     session_start = time.time()
-    await db.upsert_user(member.id, True, session_start, udata["total_seconds"], udata["cycle_seconds"])
+    await db.upsert_user(
+        member.id, True, session_start,
+        udata["total_seconds"], udata["cycle_seconds"],
+        udata["day_date"], udata["day_seconds"],
+    )
 
     role = member.guild.get_role(cfg_int("role_id"))
     if role and role not in member.roles:
@@ -187,6 +204,9 @@ async def apply_vanity_removed(bot, member: discord.Member):
     new_total = udata["total_seconds"] + session_seconds
     new_cycle = udata["cycle_seconds"] + session_seconds
 
+    today = db.today_str()
+    new_day = (udata["day_seconds"] + session_seconds) if udata["day_date"] == today else session_seconds
+
     # The cycle pauses right here — new_cycle is saved as-is (not reset),
     # so whenever this user re-adds the vanity link, apply_vanity_added()
     # picks the cycle back up from this exact value.
@@ -195,7 +215,7 @@ async def apply_vanity_removed(bot, member: discord.Member):
         new_cycle -= REWARD_THRESHOLD_SECONDS
         rewarded = True
 
-    await db.upsert_user(member.id, False, None, new_total, new_cycle)
+    await db.upsert_user(member.id, False, None, new_total, new_cycle, today, new_day)
 
     role = member.guild.get_role(cfg_int("role_id"))
     if role and role in member.roles:
@@ -211,34 +231,44 @@ async def apply_vanity_removed(bot, member: discord.Member):
 
 
 async def check_cycle_progress(bot):
-    """Periodic check so a reward fires even if someone never removes their
-    vanity — without this, a continuously-active user would only get
-    rewarded the next time apply_vanity_removed() happens to run, which
-    might be days later."""
+    """Periodic checkpoint (called every minute — see main.py's
+    cycle_reward_loop) that:
+      - rolls each active user's elapsed-since-last-checkpoint time into
+        total_seconds / cycle_seconds / day_seconds (resetting day_seconds
+        if the UTC date has rolled over),
+      - fires the 12h cycle reward whenever cycle_seconds crosses the
+        threshold,
+      - and — importantly for quests.py's 2h-today claim gate — keeps
+        day_seconds fresh to within about a minute even for someone who
+        never removes their vanity link at all today.
+    """
     guild_id = cfg_int("guild_id")
     now = time.time()
+    today = db.today_str()
 
     active_users = await db.get_active_users()
     for udata in active_users:
         session_start = udata["session_start"] or now
         elapsed = now - session_start
-        prospective_cycle = udata["cycle_seconds"] + elapsed
+        if elapsed <= 0:
+            continue
 
-        if prospective_cycle < REWARD_THRESHOLD_SECONDS:
-            continue  # hasn't hit the threshold yet, nothing to do
-
-        # Roll the checkpoint: fold the elapsed time into total/cycle now
-        # (rather than waiting for removal), reset session_start to "now"
-        # so we don't double-count this elapsed span next time, and carry
-        # any overflow past the threshold into the next cycle.
         new_total = udata["total_seconds"] + elapsed
-        new_cycle = prospective_cycle
+        new_cycle = udata["cycle_seconds"] + elapsed
+        new_day = (udata["day_seconds"] + elapsed) if udata["day_date"] == today else elapsed
+
         rewards_earned = 0
         while new_cycle >= REWARD_THRESHOLD_SECONDS:
             new_cycle -= REWARD_THRESHOLD_SECONDS
             rewards_earned += 1
 
-        await db.upsert_user(udata["user_id"], True, now, new_total, new_cycle)
+        # Roll the checkpoint forward to "now" regardless of whether a
+        # reward fired, so day_seconds/total/cycle don't fall behind for
+        # someone who keeps vanity up for hours without a reward crossing.
+        await db.upsert_user(udata["user_id"], True, now, new_total, new_cycle, today, new_day)
+
+        if not rewards_earned:
+            continue
 
         guild = bot.get_guild(guild_id) if guild_id else (bot.guilds[0] if bot.guilds else None)
         member = guild.get_member(udata["user_id"]) if guild else None
@@ -268,7 +298,15 @@ async def initial_scan(bot):
             udata = await db.get_user(member.id)
             currently_has = has_vanity(member)
             if currently_has and not udata["active"]:
-                await db.upsert_user(member.id, True, time.time(), udata["total_seconds"], udata["cycle_seconds"])
+                await db.upsert_user(
+                    member.id, True, time.time(),
+                    udata["total_seconds"], udata["cycle_seconds"],
+                    udata["day_date"], udata["day_seconds"],
+                )
             elif not currently_has and udata["active"]:
                 # they had it before a restart but not anymore; close out silently
-                await db.upsert_user(member.id, False, None, udata["total_seconds"], udata["cycle_seconds"])
+                await db.upsert_user(
+                    member.id, False, None,
+                    udata["total_seconds"], udata["cycle_seconds"],
+                    udata["day_date"], udata["day_seconds"],
+                )
