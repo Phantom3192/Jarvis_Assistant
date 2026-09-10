@@ -49,6 +49,15 @@ def format_duration(total_seconds: float) -> str:
     return " ".join(parts)
 
 
+async def _try_auto_claim_quests(bot, member: discord.Member) -> None:
+    """Give any quest of member's that's completed-but-locked (waiting on
+    today's vanity requirement) a chance to auto-claim right now.
+    Imported lazily — quests.py imports this module at the top level, so
+    importing quests here at module scope would be circular."""
+    import quests
+    await quests.auto_claim_ready(bot, member)
+
+
 def has_vanity(member: discord.Member) -> bool:
     vanity_text = config.get("vanity_text", "").lower()
     if not vanity_text or member is None:
@@ -193,6 +202,7 @@ async def apply_vanity_added(bot, member: discord.Member):
             pass
 
     await send_log_embed(bot, member, added=True, session_seconds=None, total_seconds=udata["total_seconds"])
+    await _try_auto_claim_quests(bot, member)
 
 
 async def apply_vanity_removed(bot, member: discord.Member):
@@ -229,6 +239,11 @@ async def apply_vanity_removed(bot, member: discord.Member):
 
     if rewarded:
         await grant_cycle_reward(bot, member)
+
+    # day_seconds just moved forward — this is a common way someone
+    # quietly crosses the 2h-today quest-claim requirement, so give any
+    # locked-but-completed quest a chance to auto-claim right now.
+    await _try_auto_claim_quests(bot, member)
 
 
 async def check_cycle_progress(bot):
@@ -268,9 +283,6 @@ async def check_cycle_progress(bot):
         # someone who keeps vanity up for hours without a reward crossing.
         await db.upsert_user(udata["user_id"], True, now, new_total, new_cycle, today, new_day)
 
-        if not rewards_earned:
-            continue
-
         guild = bot.get_guild(guild_id) if guild_id else (bot.guilds[0] if bot.guilds else None)
         member = guild.get_member(udata["user_id"]) if guild else None
         if member is None:
@@ -278,6 +290,11 @@ async def check_cycle_progress(bot):
 
         for _ in range(rewards_earned):
             await grant_cycle_reward(bot, member)
+
+        # day_seconds just moved forward for an active user — this is the
+        # main way someone silently crosses the 2h-today quest-claim
+        # requirement without ever touching -claimquest, so check now.
+        await _try_auto_claim_quests(bot, member)
 
 
 async def load_config_from_db():
