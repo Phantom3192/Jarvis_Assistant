@@ -2,28 +2,34 @@
 quests.py — Daily quests that stay local until claimed
 ========================================================
 
+ALL quest types in QUEST_DEFS are active for every user at once and are
+tracked/completed/claimed fully independently of each other — there is
+no more "one random quest per day".
+
 A quest completing does NOT push a reward to Jarvis by itself. Instead:
 
-  1. Progress is tracked automatically in the background, entirely inside
-     this bot's own DB (quest_counters / quest_data in db.py) — Jarvis
-     never sees any of this until step 3.
-  2. The moment the target is hit, the quest is marked "completed" here
-     only, and a heads-up gets posted to the quest log channel.
-  3. The user has to run -claimquest themselves. Claiming only succeeds
-     if they've also kept their vanity status up for at least
-     REQUIRED_VANITY_SECONDS *today* (UTC calendar day) — see
-     vanity.get_today_vanity_seconds(). Only then does the reward get
-     sent to Jarvis over the same webhook vanity rewards use.
-  4. A successful claim immediately lines up a new quest so tracking
-     continues without a gap.
+  1. Progress for every quest type is tracked automatically in the
+     background, entirely inside this bot's own DB (quest_counters /
+     quest_progress in db.py) — Jarvis never sees any of this until
+     step 3.
+  2. The moment a quest's target is hit, that quest is marked
+     "completed" here only, and a heads-up gets posted to the quest log
+     channel.
+  3. The user has to run -claimquest themselves (optionally naming a
+     specific quest, or with no argument to claim everything that's
+     ready at once). Claiming only succeeds if they've also kept their
+     vanity status up for at least REQUIRED_VANITY_SECONDS *today* (UTC
+     calendar day) — see vanity.get_today_vanity_seconds(). Only then
+     does the reward get sent to Jarvis over the same webhook vanity
+     rewards use.
 
-One quest per user per UTC day. If a quest completes but isn't claimed
-before the day rolls over, it's gone — a fresh one gets assigned instead
-next time progress is checked. This is deliberate: the 2h-vanity-today
-requirement is meant to gate *that day's* quest, not bank indefinitely.
+Each quest type resets independently at the UTC day boundary (00:00
+UTC) — a fresh baseline gets snapshotted the next time progress is
+checked for that quest type. If a quest completes but isn't claimed
+before the day rolls over, it's gone — this is deliberate: the
+2h-vanity-today requirement is meant to gate *that day's* quests, not
+bank indefinitely.
 """
-import random
-
 import discord
 
 import db
@@ -63,49 +69,52 @@ QUEST_DEFS: dict[str, dict] = {
 }
 
 
-async def _ensure_quest(user_id: int) -> dict:
-    """Return the user's quest for today, assigning a fresh one (random
-    pick from QUEST_DEFS, new baseline) if they don't have one yet, or if
-    the one on file is from a previous day."""
-    entry = await db.get_quest(user_id)
+async def _ensure_quests(user_id: int) -> dict:
+    """Return {quest_id: entry} covering every quest type in QUEST_DEFS
+    for today, assigning a fresh baseline for any quest type the user
+    doesn't have an up-to-date (today-dated) row for yet."""
     today = db.today_str()
-    if entry is not None and entry["assigned_date"] == today:
-        return entry
+    existing = await db.get_all_quests(user_id)
 
-    counters = await db.get_quest_counters(user_id)
-    quest_id = random.choice(list(QUEST_DEFS.keys()))
-    baseline = QUEST_DEFS[quest_id]["get"](counters)
-    return await db.assign_quest(user_id, quest_id, baseline, today)
+    result = {}
+    counters = None  # fetched lazily, only if something actually needs (re)assigning
+    for quest_id, qdef in QUEST_DEFS.items():
+        entry = existing.get(quest_id)
+        if entry is not None and entry["assigned_date"] == today:
+            result[quest_id] = entry
+            continue
+
+        if counters is None:
+            counters = await db.get_quest_counters(user_id)
+        baseline = qdef["get"](counters)
+        result[quest_id] = await db.assign_quest_progress(user_id, quest_id, baseline, today)
+
+    return result
 
 
-def _quest_progress(entry: dict, counters: dict) -> int:
-    qdef = QUEST_DEFS.get(entry["quest_id"])
-    if qdef is None:
-        return 0
+def _quest_progress(entry: dict, qdef: dict, counters: dict) -> int:
     current = qdef["get"](counters)
     return max(0, min(qdef["target"], current - entry["baseline"]))
 
 
 async def check_and_complete(bot, member: discord.Member) -> None:
-    """Call after any event that might have completed member's quest (a
-    message counted, a bump detected, ...). Safe to call often — a no-op
-    unless the quest is actually freshly complete. Marks it completed and
-    posts a claimable heads-up; does NOT reward — that only happens via
-    -claimquest."""
-    entry = await _ensure_quest(member.id)
-    if entry["completed"]:
-        return
-
-    qdef = QUEST_DEFS.get(entry["quest_id"])
-    if qdef is None:
-        return
-
+    """Call after any event that might have completed one of member's
+    quests (a message counted, a bump detected, ...). Safe to call often
+    — a no-op for any quest that isn't actually freshly complete. Marks
+    finished quests completed and posts a claimable heads-up per quest;
+    does NOT reward — that only happens via -claimquest."""
+    entries = await _ensure_quests(member.id)
     counters = await db.get_quest_counters(member.id)
-    if _quest_progress(entry, counters) < qdef["target"]:
-        return  # not done yet
 
-    await db.mark_quest_completed(member.id)
-    await _post_ready_log(bot, member, qdef["desc"])
+    for quest_id, entry in entries.items():
+        if entry["completed"]:
+            continue
+        qdef = QUEST_DEFS[quest_id]
+        if _quest_progress(entry, qdef, counters) < qdef["target"]:
+            continue  # not done yet
+
+        await db.mark_quest_progress_completed(member.id, quest_id)
+        await _post_ready_log(bot, member, qdef["desc"])
 
 
 async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
@@ -152,78 +161,94 @@ async def _post_claim_log(bot, member: discord.Member, quest_desc: str, reward: 
         pass
 
 
-async def status_text(member: discord.Member) -> str:
-    """Human-readable status for the -quest command."""
-    entry = await _ensure_quest(member.id)
-    qdef = QUEST_DEFS.get(entry["quest_id"])
-    if qdef is None:
-        return "⚠️ Your quest is no longer valid — a fresh one will be assigned shortly."
+async def status_embed(member: discord.Member) -> discord.Embed:
+    """Embed for the -quest command — every quest type and its current
+    progress/claim status, all shown at once."""
+    entries = await _ensure_quests(member.id)
+    counters = await db.get_quest_counters(member.id)
+    vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
 
-    if entry["claimed"]:
-        return f"✅ Today's quest (**{qdef['desc']}**) is already claimed. Come back tomorrow!"
+    embed = discord.Embed(
+        title="📋 Daily Quests",
+        description=f"{member.mention}'s quests for today — all reset at 00:00 UTC.",
+        color=discord.Color.blurple(),
+    )
+    for quest_id, qdef in QUEST_DEFS.items():
+        entry = entries[quest_id]
+        if entry["claimed"]:
+            value = "✅ Claimed today — come back tomorrow."
+        elif entry["completed"]:
+            if vanity_seconds >= REQUIRED_VANITY_SECONDS:
+                value = f"🎁 Ready! Run `-claimquest {quest_id}` (or `-claimquest`) to collect {qdef['reward']:,} {JC_EMOJI}."
+            else:
+                remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
+                value = f"🎁 Done, but needs {vanity.format_duration(remaining)} more vanity time today to claim."
+        else:
+            prog = _quest_progress(entry, qdef, counters)
+            value = f"{prog}/{qdef['target']} — reward: {qdef['reward']:,} {JC_EMOJI}"
+        embed.add_field(name=f"{qdef['desc']}  (`{quest_id}`)", value=value, inline=False)
 
-    if entry["completed"]:
-        vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
-        if vanity_seconds >= REQUIRED_VANITY_SECONDS:
-            return f"🎁 **{qdef['desc']}** is done and ready — run `-claimquest` to collect {qdef['reward']:,} {JC_EMOJI}!"
-        remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
-        return (
-            f"🎁 **{qdef['desc']}** is done, but you still need "
-            f"{vanity.format_duration(remaining)} more vanity time today before you can claim it."
-        )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    return embed
+
+
+async def claim(bot, member: discord.Member, quest_id: str | None = None) -> str:
+    """Claim member's completed quest(s). With quest_id, claims just that
+    one; with none, claims every quest that's currently completed and
+    unclaimed. Returns a chat-ready message describing the outcome."""
+    entries = await _ensure_quests(member.id)
+
+    if quest_id is not None:
+        quest_id = quest_id.lower()
+        if quest_id not in QUEST_DEFS:
+            valid = ", ".join(f"`{q}`" for q in QUEST_DEFS)
+            return f"⚠️ Unknown quest `{quest_id}`. Valid quest IDs: {valid}"
+        targets = [quest_id]
+    else:
+        targets = list(QUEST_DEFS.keys())
 
     counters = await db.get_quest_counters(member.id)
-    prog = _quest_progress(entry, counters)
-    return f"📋 Today's quest: **{qdef['desc']}** ({prog}/{qdef['target']}) — reward: {qdef['reward']:,} {JC_EMOJI}"
+    ready = []  # [(quest_id, qdef), ...] — completed and not yet claimed
+    for qid in targets:
+        entry = entries[qid]
+        qdef = QUEST_DEFS[qid]
 
+        if entry["claimed"]:
+            continue
+        if not entry["completed"]:
+            if quest_id is not None:
+                prog = _quest_progress(entry, qdef, counters)
+                return f"⏳ Quest not finished yet: **{qdef['desc']}** ({prog}/{qdef['target']})."
+            continue
+        ready.append((qid, qdef))
 
-async def claim(bot, member: discord.Member) -> str:
-    """Attempt to claim member's completed quest. Returns a chat-ready
-    message describing the outcome."""
-    entry = await db.get_quest(member.id)
-    today = db.today_str()
-
-    if entry is None or entry["assigned_date"] != today:
-        return "📋 You don't have a quest in progress today yet — do something to get one assigned!"
-
-    qdef = QUEST_DEFS.get(entry["quest_id"])
-    if qdef is None:
-        return "⚠️ Your quest is no longer valid — a fresh one will be assigned shortly."
-
-    if entry["claimed"]:
-        return "✅ You've already claimed today's quest."
-
-    if not entry["completed"]:
-        counters = await db.get_quest_counters(member.id)
-        prog = _quest_progress(entry, counters)
-        return f"⏳ Quest not finished yet: **{qdef['desc']}** ({prog}/{qdef['target']})."
+    if not ready:
+        if quest_id is not None:
+            return f"✅ You've already claimed **{QUEST_DEFS[quest_id]['desc']}** today."
+        return "📋 Nothing ready to claim right now — check `-quest` to see your progress."
 
     vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
     if vanity_seconds < REQUIRED_VANITY_SECONDS:
         remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
         return (
             f"🔒 You need to keep your vanity status up for at least "
-            f"{vanity.format_duration(REQUIRED_VANITY_SECONDS)} today to claim this. "
+            f"{vanity.format_duration(REQUIRED_VANITY_SECONDS)} today to claim quests. "
             f"You're at {vanity.format_duration(vanity_seconds)} — "
             f"{vanity.format_duration(remaining)} to go."
         )
 
-    reward = qdef["reward"]
-    delivered = await webhook.send_jc_reward(member.id, reward, reason=f"quest:{entry['quest_id']}")
-    if not delivered:
-        return "⚠️ Everything checked out, but Jarvis didn't accept the reward call — try again in a moment."
+    lines = []
+    for qid, qdef in ready:
+        reward = qdef["reward"]
+        delivered = await webhook.send_jc_reward(member.id, reward, reason=f"quest:{qid}")
+        if not delivered:
+            lines.append(f"⚠️ **{qdef['desc']}** — Jarvis didn't accept the reward call, try again shortly.")
+            continue
+        await db.mark_quest_progress_claimed(member.id, qid)
+        await _post_claim_log(bot, member, qdef["desc"], reward)
+        lines.append(f"🎉 Claimed **{qdef['desc']}** — {reward:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!")
 
-    await db.mark_quest_claimed(member.id)
-    await _post_claim_log(bot, member, qdef["desc"], reward)
-
-    # Line up the next quest right away (fresh baseline) rather than
-    # waiting for the day to roll over.
-    counters = await db.get_quest_counters(member.id)
-    next_quest_id = random.choice(list(QUEST_DEFS.keys()))
-    next_baseline = QUEST_DEFS[next_quest_id]["get"](counters)
-    await db.assign_quest(member.id, next_quest_id, next_baseline, today)
-
-    return f"🎉 Claimed **{qdef['desc']}** — {reward:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!"
+    return "\n".join(lines)
 
 
 # ── Progress tracking (message counting + bump detection) ───────────────
