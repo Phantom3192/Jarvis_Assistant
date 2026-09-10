@@ -47,9 +47,9 @@ REQUIRED_VANITY_SECONDS = 2 * 60 * 60  # 2h of vanity today, required to claim
 # Small per-quest icon shown in the field name in -quest — purely cosmetic,
 # doesn't affect claiming/tracking logic at all.
 QUEST_ICONS = {
-    "chat150": "<a:chats:1547570605501587476",
-    "bump_server": "<a:uptime:1547571238350626927",
-    "open_box": "<a:gifts:1547574389338415185",
+    "chat150": "<a:chats:1547570605501587476>",
+    "bump_server": "<a:uptime:1547571238350626927>",
+    "open_box": "<a:gifts:1547574389338415185>",
 }
 
 NOT_DONE = "❌"  # binary (target == 1) quest, not completed yet
