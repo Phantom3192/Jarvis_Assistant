@@ -16,23 +16,23 @@ doesn't leave a misleading name behind.
 # ---------------------------------------------------------------------------
 # Generic status / feedback — used everywhere for command responses
 # ---------------------------------------------------------------------------
-SUCCESS   = "✅"   # something worked
-ERROR     = "❌"   # something failed / was removed
+SUCCESS   = "<a:tick:991381528129052712>"   # something worked
+ERROR     = "<a:error:1129730436462030918>"   # something failed / was removed
 WARNING   = "⚠️"   # non-fatal problem, bad input, delivery failure
 DENIED    = "🚫"   # permission check failed (owner-only commands)
 DELETE    = "🗑️"   # destructive action confirmation (resetvanitydata)
 CONFIG    = "⚙️"   # config/settings display
 LOCKED    = "🔒"   # gated behind a requirement (vanity time, etc.)
-PENDING   = "⏳"   # still in progress, not done yet
+PENDING   = "<:pending:731387367520206898>"   # still in progress, not done yet
 TEST      = "🧪"   # test/debug commands
-CELEBRATE = "🎉"   # rewards, claims, milestones
-GIFT      = "🎁"   # anything reward/box related
+CELEBRATE = "<a:giveaway:1532957062084956220>"   # rewards, claims, milestones
+GIFT      = "<a:gifts:1530981382757683271>"   # anything reward/box related
 USER      = "👥"   # "user" field label in log embeds
 
 # ---------------------------------------------------------------------------
 # Currency — Jarvis Credits (JC), the bot's single reward currency
 # ---------------------------------------------------------------------------
-JC = "🪙"
+JC = "<a:coinn:1002185094393499689>"
 JC_NAME = "Jarvis Credit"
 
 # ---------------------------------------------------------------------------
