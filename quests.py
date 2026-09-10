@@ -127,12 +127,18 @@ def _quest_progress(entry: dict, qdef: dict, counters: dict) -> int:
 async def check_and_complete(bot, member: discord.Member) -> None:
     """Call after any event that might have completed one of member's
     quests (a message counted, a bump detected, ...). Safe to call often
-    — a no-op for any quest that isn't actually freshly complete. Marks
-    finished quests completed and posts a claimable heads-up per quest;
-    does NOT reward — that only happens via -claimquest."""
+    — a no-op for any quest that isn't actually freshly complete.
+
+    Marks finished quests completed. If member already has today's 2h
+    vanity requirement covered, the reward is delivered immediately (no
+    -claimquest needed) and they get a DM. Otherwise the quest is left
+    completed-but-locked and a heads-up is posted to the quest log —
+    see auto_claim_ready(), which picks these up the moment vanity
+    catches up later that day."""
     entries = await _ensure_quests(member.id)
     counters = await db.get_quest_counters(member.id)
 
+    newly_completed = []
     for quest_id, entry in entries.items():
         if entry["completed"]:
             continue
@@ -141,7 +147,17 @@ async def check_and_complete(bot, member: discord.Member) -> None:
             continue  # not done yet
 
         await db.mark_quest_progress_completed(member.id, quest_id)
-        await _post_ready_log(bot, member, qdef["desc"])
+        newly_completed.append((quest_id, qdef))
+
+    if not newly_completed:
+        return
+
+    vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
+    for quest_id, qdef in newly_completed:
+        if vanity_seconds >= REQUIRED_VANITY_SECONDS:
+            await _deliver_claim(bot, member, quest_id, qdef)
+        else:
+            await _post_ready_log(bot, member, qdef["desc"])
 
 
 async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
@@ -159,7 +175,10 @@ async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
     )
     embed.add_field(
         name=f"{emoji.LOCKED} Requirement",
-        value=f"Needs {vanity.format_duration(REQUIRED_VANITY_SECONDS)} of vanity time today to claim.",
+        value=(
+            f"Needs {vanity.format_duration(REQUIRED_VANITY_SECONDS)} of vanity time today to claim — "
+            f"it'll be delivered automatically the moment that's met, or run `-claimquest` any time after."
+        ),
         inline=False,
     )
     embed.set_thumbnail(url=member.display_avatar.url)
@@ -186,6 +205,61 @@ async def _post_claim_log(bot, member: discord.Member, quest_desc: str, reward: 
         await channel.send(embed=embed)
     except discord.HTTPException:
         pass
+
+
+async def _dm_quest_claimed(member: discord.Member, quest_desc: str, reward: int) -> bool:
+    """DM the user that a quest's reward landed, mirroring the vanity
+    24h-reward DM style. Stays silent if their DMs are closed."""
+    embed = discord.Embed(
+        title=f"{emoji.SUCCESS} Daily Quest Completed!",
+        description=(
+            f"You've completed the **{quest_desc}** daily quest!\n"
+            f"Your reward of **{reward:,}** {JC_EMOJI} {JC_NAME}s has been added to your account.\n\n"
+            f"Check your quest progress any time with `-quest`, or your balance with `!balance`."
+        ),
+        color=discord.Color.green(),
+    )
+    try:
+        await member.send(embed=embed)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def _deliver_claim(bot, member: discord.Member, quest_id: str, qdef: dict) -> str | None:
+    """Send qdef's reward to Jarvis and mark this quest claimed. Returns
+    None on success, or a chat-ready error string if the webhook call
+    failed (nothing is marked claimed in that case, so it can be retried
+    — manually via -claimquest, or automatically next time
+    auto_claim_ready()/check_and_complete() runs)."""
+    reward = qdef["reward"]
+    delivered = await webhook.send_jc_reward(member.id, reward, reason=f"quest:{quest_id}")
+    if not delivered:
+        return f"{emoji.WARNING} **{qdef['desc']}** — Jarvis didn't accept the reward call, try again shortly."
+
+    await db.mark_quest_progress_claimed(member.id, quest_id)
+    await _post_claim_log(bot, member, qdef["desc"], reward)
+    await _dm_quest_claimed(member, qdef["desc"], reward)
+    return None
+
+
+async def auto_claim_ready(bot, member: discord.Member) -> None:
+    """Claim every completed-but-unclaimed quest member has right now,
+    if (and only if) today's vanity requirement is already met. Safe to
+    call anytime — vanity.py calls this whenever a member's vanity
+    status changes or their tracked vanity time ticks forward, so a
+    quest that was locked waiting on vanity gets auto-claimed the
+    instant that requirement is satisfied, with no -claimquest needed."""
+    vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
+    if vanity_seconds < REQUIRED_VANITY_SECONDS:
+        return
+
+    entries = await _ensure_quests(member.id)
+    for quest_id, qdef in QUEST_DEFS.items():
+        entry = entries[quest_id]
+        if not entry["completed"] or entry["claimed"]:
+            continue
+        await _deliver_claim(bot, member, quest_id, qdef)
 
 
 async def status_embed(member: discord.Member) -> discord.Embed:
@@ -276,14 +350,11 @@ async def claim(bot, member: discord.Member, quest_id: str | None = None) -> str
 
     lines = []
     for qid, qdef in ready:
-        reward = qdef["reward"]
-        delivered = await webhook.send_jc_reward(member.id, reward, reason=f"quest:{qid}")
-        if not delivered:
-            lines.append(f"{emoji.WARNING} **{qdef['desc']}** — Jarvis didn't accept the reward call, try again shortly.")
-            continue
-        await db.mark_quest_progress_claimed(member.id, qid)
-        await _post_claim_log(bot, member, qdef["desc"], reward)
-        lines.append(f"{emoji.CELEBRATE} Claimed **{qdef['desc']}** — {reward:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!")
+        err = await _deliver_claim(bot, member, qid, qdef)
+        if err:
+            lines.append(err)
+        else:
+            lines.append(f"{emoji.CELEBRATE} Claimed **{qdef['desc']}** — {qdef['reward']:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!")
 
     return "\n".join(lines)
 
