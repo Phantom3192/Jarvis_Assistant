@@ -35,9 +35,10 @@ import discord
 import db
 import vanity
 import webhook
+import emoji
 
-JC_EMOJI = "🪙"
-JC_NAME = "Jarvis Credit"
+JC_EMOJI = emoji.JC
+JC_NAME = emoji.JC_NAME
 
 REQUIRED_VANITY_SECONDS = 2 * 60 * 60  # 2h of vanity today, required to claim
 
@@ -126,12 +127,12 @@ async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
         return
 
     embed = discord.Embed(
-        title="✅ Quest Ready to Claim",
+        title=f"{emoji.SUCCESS} Quest Ready to Claim",
         description=f"{member.mention} finished **{quest_desc}** — run `-claimquest` to collect it.",
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="🔒 Requirement",
+        name=f"{emoji.LOCKED} Requirement",
         value=f"Needs {vanity.format_duration(REQUIRED_VANITY_SECONDS)} of vanity time today to claim.",
         inline=False,
     )
@@ -150,10 +151,10 @@ async def _post_claim_log(bot, member: discord.Member, quest_desc: str, reward: 
     if channel is None:
         return
 
-    embed = discord.Embed(title="🎉 Quest Claimed", color=discord.Color.green())
-    embed.add_field(name="👥 User", value=f"{member.mention} (`{member}`)", inline=False)
-    embed.add_field(name="🌸 Quest", value=quest_desc, inline=False)
-    embed.add_field(name="🎁 Reward", value=f"{reward:,} {JC_EMOJI} {JC_NAME}s", inline=False)
+    embed = discord.Embed(title=f"{emoji.CELEBRATE} Quest Claimed", color=discord.Color.green())
+    embed.add_field(name=f"{emoji.USER} User", value=f"{member.mention} (`{member}`)", inline=False)
+    embed.add_field(name=f"{emoji.QUEST_TYPE} Quest", value=quest_desc, inline=False)
+    embed.add_field(name=f"{emoji.GIFT} Reward", value=f"{reward:,} {JC_EMOJI} {JC_NAME}s", inline=False)
     embed.set_thumbnail(url=member.display_avatar.url)
     try:
         await channel.send(embed=embed)
@@ -169,20 +170,20 @@ async def status_embed(member: discord.Member) -> discord.Embed:
     vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
 
     embed = discord.Embed(
-        title="📋 Daily Quests",
+        title=f"{emoji.QUEST_LIST} Daily Quests",
         description=f"{member.mention}'s quests for today — all reset at 00:00 UTC.",
         color=discord.Color.blurple(),
     )
     for quest_id, qdef in QUEST_DEFS.items():
         entry = entries[quest_id]
         if entry["claimed"]:
-            value = "✅ Claimed today — come back tomorrow."
+            value = f"{emoji.SUCCESS} Claimed today — come back tomorrow."
         elif entry["completed"]:
             if vanity_seconds >= REQUIRED_VANITY_SECONDS:
-                value = f"🎁 Ready! Run `-claimquest {quest_id}` (or `-claimquest`) to collect {qdef['reward']:,} {JC_EMOJI}."
+                value = f"{emoji.GIFT} Ready! Run `-claimquest {quest_id}` (or `-claimquest`) to collect {qdef['reward']:,} {JC_EMOJI}."
             else:
                 remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
-                value = f"🎁 Done, but needs {vanity.format_duration(remaining)} more vanity time today to claim."
+                value = f"{emoji.GIFT} Done, but needs {vanity.format_duration(remaining)} more vanity time today to claim."
         else:
             prog = _quest_progress(entry, qdef, counters)
             value = f"{prog}/{qdef['target']} — reward: {qdef['reward']:,} {JC_EMOJI}"
@@ -202,7 +203,7 @@ async def claim(bot, member: discord.Member, quest_id: str | None = None) -> str
         quest_id = quest_id.lower()
         if quest_id not in QUEST_DEFS:
             valid = ", ".join(f"`{q}`" for q in QUEST_DEFS)
-            return f"⚠️ Unknown quest `{quest_id}`. Valid quest IDs: {valid}"
+            return f"{emoji.WARNING} Unknown quest `{quest_id}`. Valid quest IDs: {valid}"
         targets = [quest_id]
     else:
         targets = list(QUEST_DEFS.keys())
@@ -218,20 +219,20 @@ async def claim(bot, member: discord.Member, quest_id: str | None = None) -> str
         if not entry["completed"]:
             if quest_id is not None:
                 prog = _quest_progress(entry, qdef, counters)
-                return f"⏳ Quest not finished yet: **{qdef['desc']}** ({prog}/{qdef['target']})."
+                return f"{emoji.PENDING} Quest not finished yet: **{qdef['desc']}** ({prog}/{qdef['target']})."
             continue
         ready.append((qid, qdef))
 
     if not ready:
         if quest_id is not None:
-            return f"✅ You've already claimed **{QUEST_DEFS[quest_id]['desc']}** today."
-        return "📋 Nothing ready to claim right now — check `-quest` to see your progress."
+            return f"{emoji.SUCCESS} You've already claimed **{QUEST_DEFS[quest_id]['desc']}** today."
+        return f"{emoji.QUEST_LIST} Nothing ready to claim right now — check `-quest` to see your progress."
 
     vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
     if vanity_seconds < REQUIRED_VANITY_SECONDS:
         remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
         return (
-            f"🔒 You need to keep your vanity status up for at least "
+            f"{emoji.LOCKED} You need to keep your vanity status up for at least "
             f"{vanity.format_duration(REQUIRED_VANITY_SECONDS)} today to claim quests. "
             f"You're at {vanity.format_duration(vanity_seconds)} — "
             f"{vanity.format_duration(remaining)} to go."
@@ -242,11 +243,11 @@ async def claim(bot, member: discord.Member, quest_id: str | None = None) -> str
         reward = qdef["reward"]
         delivered = await webhook.send_jc_reward(member.id, reward, reason=f"quest:{qid}")
         if not delivered:
-            lines.append(f"⚠️ **{qdef['desc']}** — Jarvis didn't accept the reward call, try again shortly.")
+            lines.append(f"{emoji.WARNING} **{qdef['desc']}** — Jarvis didn't accept the reward call, try again shortly.")
             continue
         await db.mark_quest_progress_claimed(member.id, qid)
         await _post_claim_log(bot, member, qdef["desc"], reward)
-        lines.append(f"🎉 Claimed **{qdef['desc']}** — {reward:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!")
+        lines.append(f"{emoji.CELEBRATE} Claimed **{qdef['desc']}** — {reward:,} {JC_EMOJI} {JC_NAME}s sent to your Jarvis balance!")
 
     return "\n".join(lines)
 
