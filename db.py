@@ -80,7 +80,8 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS quest_counters (
             user_id   TEXT PRIMARY KEY,
             messages  INTEGER NOT NULL DEFAULT 0,
-            bumps     INTEGER NOT NULL DEFAULT 0
+            bumps     INTEGER NOT NULL DEFAULT 0,
+            boxes     INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -102,6 +103,7 @@ async def init_db():
         "ALTER TABLE vanity_data ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0",
         "ALTER TABLE vanity_data ADD COLUMN day_date TEXT",
         "ALTER TABLE vanity_data ADD COLUMN day_seconds REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE quest_counters ADD COLUMN boxes INTEGER NOT NULL DEFAULT 0",
     ):
         try:
             await client.execute(ddl)
@@ -228,19 +230,19 @@ async def reset_all_user_data() -> int:
 async def get_quest_counters(user_id: int) -> dict:
     client = get_client()
     rs = await client.execute(
-        "SELECT messages, bumps FROM quest_counters WHERE user_id = ?",
+        "SELECT messages, bumps, boxes FROM quest_counters WHERE user_id = ?",
         [str(user_id)],
     )
     if rs.rows:
         row = rs.rows[0]
-        return {"messages": row[0] or 0, "bumps": row[1] or 0}
-    return {"messages": 0, "bumps": 0}
+        return {"messages": row[0] or 0, "bumps": row[1] or 0, "boxes": row[2] or 0}
+    return {"messages": 0, "bumps": 0, "boxes": 0}
 
 
 async def increment_quest_message_count(user_id: int) -> None:
     client = get_client()
     await client.execute(
-        "INSERT INTO quest_counters (user_id, messages, bumps) VALUES (?, 1, 0) "
+        "INSERT INTO quest_counters (user_id, messages, bumps, boxes) VALUES (?, 1, 0, 0) "
         "ON CONFLICT(user_id) DO UPDATE SET messages = messages + 1",
         [str(user_id)],
     )
@@ -249,8 +251,17 @@ async def increment_quest_message_count(user_id: int) -> None:
 async def increment_quest_bump_count(user_id: int) -> None:
     client = get_client()
     await client.execute(
-        "INSERT INTO quest_counters (user_id, messages, bumps) VALUES (?, 0, 1) "
+        "INSERT INTO quest_counters (user_id, messages, bumps, boxes) VALUES (?, 0, 1, 0) "
         "ON CONFLICT(user_id) DO UPDATE SET bumps = bumps + 1",
+        [str(user_id)],
+    )
+
+
+async def increment_quest_box_count(user_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO quest_counters (user_id, messages, bumps, boxes) VALUES (?, 0, 0, 1) "
+        "ON CONFLICT(user_id) DO UPDATE SET boxes = boxes + 1",
         [str(user_id)],
     )
 
