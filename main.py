@@ -10,6 +10,7 @@ import webhook
 import quests
 import boxes
 import help_menu
+import emoji
 
 intents = discord.Intents.default()
 intents.members = True
@@ -46,13 +47,13 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return  # someone typo'd a command or another bot shares the "-" prefix — stay quiet
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("🚫 Only the bot owner can use this command.")
+        await ctx.send(f"{emoji.DENIED} Only the bot owner can use this command.")
         return
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"⚠️ Missing an argument: `{error.param.name}`. Check the command's usage.")
+        await ctx.send(f"{emoji.WARNING} Missing an argument: `{error.param.name}`. Check the command's usage.")
         return
     if isinstance(error, commands.BadArgument):
-        await ctx.send(f"⚠️ Couldn't understand one of the arguments: {error}")
+        await ctx.send(f"{emoji.WARNING} Couldn't understand one of the arguments: {error}")
         return
 
     # Anything else is unexpected — log the full traceback to console for
@@ -61,7 +62,7 @@ async def on_command_error(ctx, error):
     print(f"[on_command_error] Unhandled error in command '{ctx.command}': {error!r}")
     import traceback
     traceback.print_exception(type(error), error, error.__traceback__)
-    await ctx.send(f"❌ Something went wrong running that command: `{error}`")
+    await ctx.send(f"{emoji.ERROR} Something went wrong running that command: `{error}`")
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ async def start_cycle_reward_loop():
 async def setvanity(ctx, *, text: str):
     vanity.config["vanity_text"] = text
     await db.set_config("vanity_text", text)
-    await ctx.send(f"✅ Vanity text set to `{text}`")
+    await ctx.send(f"{emoji.SUCCESS} Vanity text set to `{text}`")
 
 
 @bot.command(name="setrole")
@@ -184,7 +185,7 @@ async def setvanity(ctx, *, text: str):
 async def setrole(ctx, role: discord.Role):
     vanity.config["role_id"] = str(role.id)
     await db.set_config("role_id", role.id)
-    await ctx.send(f"✅ Vanity role set to {role.mention}")
+    await ctx.send(f"{emoji.SUCCESS} Vanity role set to {role.mention}")
 
 
 @bot.command(name="setlogchannel")
@@ -192,7 +193,7 @@ async def setrole(ctx, role: discord.Role):
 async def setlogchannel(ctx, channel: discord.TextChannel):
     vanity.config["log_channel_id"] = str(channel.id)
     await db.set_config("log_channel_id", channel.id)
-    await ctx.send(f"✅ Log channel set to {channel.mention}")
+    await ctx.send(f"{emoji.SUCCESS} Log channel set to {channel.mention}")
 
 
 @bot.command(name="setguild")
@@ -200,7 +201,7 @@ async def setlogchannel(ctx, channel: discord.TextChannel):
 async def setguild(ctx):
     vanity.config["guild_id"] = str(ctx.guild.id)
     await db.set_config("guild_id", ctx.guild.id)
-    await ctx.send("✅ This server is now the tracked guild.")
+    await ctx.send(f"{emoji.SUCCESS} This server is now the tracked guild.")
 
 
 @bot.command(name="vanityconfig")
@@ -209,7 +210,7 @@ async def vanityconfig(ctx):
     role = ctx.guild.get_role(vanity.cfg_int("role_id"))
     channel = bot.get_channel(vanity.cfg_int("log_channel_id"))
     quest_channel = bot.get_channel(vanity.cfg_int("quest_log_channel_id"))
-    embed = discord.Embed(title="⚙️ Vanity Bot Config", color=discord.Color.blurple())
+    embed = discord.Embed(title=f"{emoji.CONFIG} Vanity Bot Config", color=discord.Color.blurple())
     embed.add_field(name="Vanity Text", value=f"`{vanity.config.get('vanity_text')}`", inline=False)
     embed.add_field(name="Role", value=role.mention if role else "Not set", inline=True)
     embed.add_field(name="Log Channel", value=channel.mention if channel else "Not set", inline=True)
@@ -229,9 +230,9 @@ async def testreward(ctx, member: discord.Member = None, amount: int = None):
     and DM delivery."""
     member = member or ctx.author
     test_amount = amount if amount is not None else vanity.REWARD_AMOUNT_JC
-    await ctx.send(f"🧪 Testing reward flow for {member.mention} — {test_amount:,} JC...")
+    await ctx.send(f"{emoji.TEST} Testing reward flow for {member.mention} — {test_amount:,} JC...")
     await vanity.grant_cycle_reward(bot, member, amount=test_amount)
-    await ctx.send("✅ Test complete — check the log channel and the target user's DMs.")
+    await ctx.send(f"{emoji.SUCCESS} Test complete — check the log channel and the target user's DMs.")
 
 
 @bot.command(name="resetvanitydata")
@@ -244,13 +245,13 @@ async def resetvanitydata(ctx, confirm: str = None):
     Requires typing the literal word "confirm" to avoid a fat-finger wipe."""
     if confirm != "confirm":
         await ctx.send(
-            "⚠️ This wipes **every user's** vanity time and cycle progress "
+            f"{emoji.WARNING} This wipes **every user's** vanity time and cycle progress "
             "(config stays untouched). Run `-resetvanitydata confirm` if you're sure."
         )
         return
 
     count = await db.reset_all_user_data()
-    await ctx.send(f"🗑️ Vanity data reset — cleared {count} user record(s). Config was left untouched.")
+    await ctx.send(f"{emoji.DELETE} Vanity data reset — cleared {count} user record(s). Config was left untouched.")
 
 
 @bot.command(name="vanitytime")
@@ -267,7 +268,7 @@ async def vanitytime(ctx, member: discord.Member = None):
         today_seconds += elapsed
     remaining = max(0, vanity.REWARD_THRESHOLD_SECONDS - cycle)
     embed = discord.Embed(
-        title="🎉 Vanity Time",
+        title=f"{emoji.CELEBRATE} Vanity Time",
         description=f"{member.mention}'s vanity stats:",
         color=discord.Color.gold(),
     )
@@ -276,7 +277,7 @@ async def vanitytime(ctx, member: discord.Member = None):
     embed.add_field(name="Current 24h cycle", value=vanity.format_duration(cycle), inline=True)
     embed.add_field(
         name="Next reward in",
-        value=vanity.format_duration(remaining) if remaining > 0 else "Any moment now 🎁",
+        value=vanity.format_duration(remaining) if remaining > 0 else f"Any moment now {emoji.GIFT}",
         inline=True,
     )
     embed.set_thumbnail(url=member.display_avatar.url)
@@ -310,14 +311,14 @@ async def claimquest(ctx, quest_id: str = None):
 async def setquestlogchannel(ctx, channel: discord.TextChannel):
     vanity.config["quest_log_channel_id"] = str(channel.id)
     await db.set_config("quest_log_channel_id", channel.id)
-    await ctx.send(f"✅ Quest completions/claims will now be logged in {channel.mention}.")
+    await ctx.send(f"{emoji.SUCCESS} Quest completions/claims will now be logged in {channel.mention}.")
 
 
 @bot.command(name="questlogchannel")
 @is_owner()
 async def questlogchannel(ctx):
     channel = bot.get_channel(vanity.cfg_int("quest_log_channel_id"))
-    await ctx.send(f"📋 Current quest log channel: {channel.mention if channel else 'not set'}")
+    await ctx.send(f"{emoji.QUEST_LIST} Current quest log channel: {channel.mention if channel else 'not set'}")
 
 
 # ---------------------------------------------------------------------------
