@@ -44,7 +44,7 @@ SESSION_DURATION = "⏱️"
 # ---------------------------------------------------------------------------
 # Quests
 # ---------------------------------------------------------------------------
-QUEST_LIST = "📋"   # -quest / quest log channel headers
+QUEST_LIST = "<a:diamond_black:1547569545726926990>"   # -quest / quest log channel headers
 QUEST_TYPE = "🌸"   # "quest" field label in the claim log embed
 
 # ---------------------------------------------------------------------------
