@@ -289,16 +289,20 @@ async def vanitytime(ctx, member: discord.Member = None):
 
 @bot.command(name="quest")
 async def quest_cmd(ctx, member: discord.Member = None):
-    """-quest [@user] — shows today's quest and its progress/claim status."""
+    """-quest [@user] — shows today's quests (all of them) and their
+    progress/claim status."""
     member = member or ctx.author
-    await ctx.send(await quests.status_text(member))
+    embed = await quests.status_embed(member)
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="claimquest")
-async def claimquest(ctx):
-    """-claimquest — claim today's completed quest. Requires at least 2h
-    of vanity time today (see -vanitytime)."""
-    await ctx.send(await quests.claim(bot, ctx.author))
+async def claimquest(ctx, quest_id: str = None):
+    """-claimquest [quest_id] — claim quest(s). Omit quest_id to claim
+    every quest that's currently ready; pass one (see -quest for the IDs)
+    to claim just that one. Requires at least 2h of vanity time today
+    (see -vanitytime)."""
+    await ctx.send(await quests.claim(bot, ctx.author, quest_id))
 
 
 @bot.command(name="setquestlogchannel")
