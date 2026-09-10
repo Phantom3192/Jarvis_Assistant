@@ -30,6 +30,8 @@ before the day rolls over, it's gone — this is deliberate: the
 2h-vanity-today requirement is meant to gate *that day's* quests, not
 bank indefinitely.
 """
+import time
+
 import discord
 
 import db
@@ -41,6 +43,30 @@ JC_EMOJI = emoji.JC
 JC_NAME = emoji.JC_NAME
 
 REQUIRED_VANITY_SECONDS = 2 * 60 * 60  # 2h of vanity today, required to claim
+
+# Small per-quest icon shown in the field name in -quest — purely cosmetic,
+# doesn't affect claiming/tracking logic at all.
+QUEST_ICONS = {
+    "chat150": "<a:chats:1547570605501587476",
+    "bump_server": "<a:uptime:1547571238350626927",
+    "open_box": "<a:gifts:1547574389338415185",
+}
+
+NOT_DONE = "❌"  # binary (target == 1) quest, not completed yet
+
+
+def _progress_bar(current: int, target: int, length: int = 10) -> str:
+    """Render a 10-segment filled/empty bar, e.g. ▰▰▰▰▰▰▰▱▱▱."""
+    if target <= 0:
+        filled = length
+    else:
+        filled = round(length * max(0, min(current, target)) / target)
+    return "▰" * filled + "▱" * (length - filled)
+
+
+def _next_reset_unix() -> int:
+    """Unix timestamp of the next UTC-day boundary (00:00 UTC)."""
+    return (int(time.time()) // 86400 + 1) * 86400
 
 DISBOARD_BOT_ID = 302050872383242240
 
@@ -168,26 +194,36 @@ async def status_embed(member: discord.Member) -> discord.Embed:
     entries = await _ensure_quests(member.id)
     counters = await db.get_quest_counters(member.id)
     vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
+    reset_unix = _next_reset_unix()
 
     embed = discord.Embed(
-        title=f"{emoji.QUEST_LIST} Daily Quests",
-        description=f"{member.mention}'s quests for today — all reset at 00:00 UTC.",
+        title=f"{emoji.QUEST_LIST} Your Daily Quests",
+        description=f"Quests reset <t:{reset_unix}:R> (<t:{reset_unix}:t>).",
         color=discord.Color.blurple(),
     )
     for quest_id, qdef in QUEST_DEFS.items():
         entry = entries[quest_id]
+        icon = QUEST_ICONS.get(quest_id, "•")
+        reward_line = f"**Reward:** {qdef['reward']:,} {JC_EMOJI} {JC_NAME}s"
+
         if entry["claimed"]:
-            value = f"{emoji.SUCCESS} Claimed today — come back tomorrow."
+            status_line = f"{emoji.SUCCESS} Claimed today — come back tomorrow."
+            value = status_line
         elif entry["completed"]:
             if vanity_seconds >= REQUIRED_VANITY_SECONDS:
-                value = f"{emoji.GIFT} Ready! Run `-claimquest {quest_id}` (or `-claimquest`) to collect {qdef['reward']:,} {JC_EMOJI}."
+                status_line = f"{emoji.GIFT} Ready! Run `-claimquest {quest_id}` (or `-claimquest`)."
             else:
                 remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
-                value = f"{emoji.GIFT} Done, but needs {vanity.format_duration(remaining)} more vanity time today to claim."
+                status_line = f"{emoji.GIFT} Done, but needs {vanity.format_duration(remaining)} more vanity time today."
+            value = f"{status_line}\n{reward_line}"
+        elif qdef["target"] == 1:
+            value = f"{NOT_DONE} Not completed yet\n{reward_line}"
         else:
             prog = _quest_progress(entry, qdef, counters)
-            value = f"{prog}/{qdef['target']} — reward: {qdef['reward']:,} {JC_EMOJI}"
-        embed.add_field(name=qdef["desc"], value=value, inline=False)
+            bar = _progress_bar(prog, qdef["target"])
+            value = f"{bar} {prog}/{qdef['target']}\n{reward_line}"
+
+        embed.add_field(name=f"{icon} {qdef['desc']}", value=value, inline=False)
 
     embed.set_thumbnail(url=member.display_avatar.url)
     return embed
