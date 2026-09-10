@@ -25,6 +25,7 @@ import discord
 import db
 import vanity
 import webhook
+import quests
 
 JC_EMOJI = "🪙"
 JC_NAME = "Jarvis Credit"
@@ -57,6 +58,11 @@ async def maybe_drop(bot, member: discord.Member) -> None:
     # Cooldown starts now regardless of the rolled amount (even a 0 JC
     # box still counts as "found one" and gates the next 12h).
     await db.set_last_box_drop(member.id, time.time())
+
+    # Opening the box counts toward the "Open 1 Box" quest regardless of
+    # the JC amount rolled.
+    await db.increment_quest_box_count(member.id)
+    await quests.check_and_complete(bot, member)
 
     amount = random.randint(BOX_MIN_JC, BOX_MAX_JC)
     delivered = True
