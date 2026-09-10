@@ -54,6 +54,12 @@ QUEST_DEFS: dict[str, dict] = {
         "reward": 1_000,
         "get": lambda counters: counters["bumps"],
     },
+    "open_box": {
+        "desc": "Open 1 Box",
+        "target": 1,
+        "reward": 500,
+        "get": lambda counters: counters["boxes"],
+    },
 }
 
 
