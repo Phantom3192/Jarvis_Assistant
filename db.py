@@ -55,11 +55,12 @@ async def init_db():
     await client.execute(
         """
         CREATE TABLE IF NOT EXISTS vanity_data (
-            user_id        TEXT PRIMARY KEY,
-            active         INTEGER NOT NULL DEFAULT 0,
-            session_start  REAL,
-            total_seconds  REAL NOT NULL DEFAULT 0,
-            cycle_seconds  REAL NOT NULL DEFAULT 0
+            user_id           TEXT PRIMARY KEY,
+            active            INTEGER NOT NULL DEFAULT 0,
+            session_start     REAL,
+            session_orig_start REAL,
+            total_seconds     REAL NOT NULL DEFAULT 0,
+            cycle_seconds     REAL NOT NULL DEFAULT 0
         )
         """
     )
@@ -119,6 +120,7 @@ async def init_db():
         "ALTER TABLE vanity_data ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0",
         "ALTER TABLE vanity_data ADD COLUMN day_date TEXT",
         "ALTER TABLE vanity_data ADD COLUMN day_seconds REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE vanity_data ADD COLUMN session_orig_start REAL",
         "ALTER TABLE quest_counters ADD COLUMN boxes INTEGER NOT NULL DEFAULT 0",
     ):
         try:
@@ -127,6 +129,20 @@ async def init_db():
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 print(f"[db] migration check failed ({ddl}): {e}")
+
+    # Backfill: any currently-active session that predates the
+    # session_orig_start column has no record of when it truly began.
+    # Best available guess is the existing (checkpoint-drifted)
+    # session_start — better than leaving it NULL, which would otherwise
+    # make session_seconds fall back to time.time() (i.e. ~0) the next
+    # time that session ends.
+    try:
+        await client.execute(
+            "UPDATE vanity_data SET session_orig_start = session_start "
+            "WHERE active = 1 AND session_orig_start IS NULL"
+        )
+    except Exception as e:
+        print(f"[db] session_orig_start backfill failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +171,7 @@ async def set_config(key: str, value) -> None:
 async def get_user(user_id: int) -> dict:
     client = get_client()
     rs = await client.execute(
-        "SELECT active, session_start, total_seconds, cycle_seconds, day_date, day_seconds "
+        "SELECT active, session_start, session_orig_start, total_seconds, cycle_seconds, day_date, day_seconds "
         "FROM vanity_data WHERE user_id = ?",
         [str(user_id)],
     )
@@ -164,14 +180,16 @@ async def get_user(user_id: int) -> dict:
         return {
             "active": bool(row[0]),
             "session_start": row[1],
-            "total_seconds": row[2] or 0,
-            "cycle_seconds": row[3] or 0,
-            "day_date": row[4],
-            "day_seconds": row[5] or 0,
+            "session_orig_start": row[2],
+            "total_seconds": row[3] or 0,
+            "cycle_seconds": row[4] or 0,
+            "day_date": row[5],
+            "day_seconds": row[6] or 0,
         }
     return {
         "active": False,
         "session_start": None,
+        "session_orig_start": None,
         "total_seconds": 0,
         "cycle_seconds": 0,
         "day_date": today_str(),
@@ -187,19 +205,28 @@ async def upsert_user(
     cycle_seconds: float,
     day_date: str,
     day_seconds: float,
+    session_orig_start=None,
 ) -> None:
+    """session_start is the rolling per-checkpoint timestamp (used only to
+    measure elapsed-since-last-checkpoint); session_orig_start is the true
+    moment the current session began and is what session-duration displays
+    should be computed from. Pass session_orig_start explicitly when
+    starting a new session or preserving an existing one across a
+    checkpoint; it's left NULL (via the default) once active=False, which
+    is fine since it's not read while inactive."""
     client = get_client()
     await client.execute(
-        "INSERT INTO vanity_data (user_id, active, session_start, total_seconds, cycle_seconds, day_date, day_seconds) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO vanity_data (user_id, active, session_start, session_orig_start, total_seconds, cycle_seconds, day_date, day_seconds) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET "
         "active = excluded.active, "
         "session_start = excluded.session_start, "
+        "session_orig_start = excluded.session_orig_start, "
         "total_seconds = excluded.total_seconds, "
         "cycle_seconds = excluded.cycle_seconds, "
         "day_date = excluded.day_date, "
         "day_seconds = excluded.day_seconds",
-        [str(user_id), int(active), session_start, total_seconds, cycle_seconds, day_date, day_seconds],
+        [str(user_id), int(active), session_start, session_orig_start, total_seconds, cycle_seconds, day_date, day_seconds],
     )
 
 
@@ -209,17 +236,18 @@ async def get_active_users() -> list[dict]:
     stay fresh without waiting for someone to remove their vanity."""
     client = get_client()
     rs = await client.execute(
-        "SELECT user_id, session_start, total_seconds, cycle_seconds, day_date, day_seconds "
+        "SELECT user_id, session_start, session_orig_start, total_seconds, cycle_seconds, day_date, day_seconds "
         "FROM vanity_data WHERE active = 1"
     )
     return [
         {
             "user_id": int(row[0]),
             "session_start": row[1],
-            "total_seconds": row[2] or 0,
-            "cycle_seconds": row[3] or 0,
-            "day_date": row[4],
-            "day_seconds": row[5] or 0,
+            "session_orig_start": row[2],
+            "total_seconds": row[3] or 0,
+            "cycle_seconds": row[4] or 0,
+            "day_date": row[5],
+            "day_seconds": row[6] or 0,
         }
         for row in rs.rows
     ]
