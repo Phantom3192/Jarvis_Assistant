@@ -305,7 +305,7 @@ async def check_cycle_progress(bot):
 
         # day_seconds just moved forward for an active user — this is the
         # main way someone silently crosses the 2h-today quest-claim
-        # requirement without ever touching -claimquest, so check now.
+        # requirement without any manual action, so check now.
         await _try_auto_claim_quests(bot, member)
 
 
