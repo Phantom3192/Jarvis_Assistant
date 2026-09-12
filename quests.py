@@ -292,7 +292,6 @@ async def status_embed(member: discord.Member) -> discord.Embed:
     progress/claim status, all shown at once."""
     entries = await _ensure_quests(member.id)
     counters = await db.get_quest_counters(member.id)
-    vanity_seconds = await vanity.get_today_vanity_seconds(member.id)
     reset_unix = _next_reset_unix()
 
     embed = discord.Embed(
@@ -309,14 +308,7 @@ async def status_embed(member: discord.Member) -> discord.Embed:
             status_line = f"{emoji.SUCCESS} Claimed today — come back tomorrow."
             value = status_line
         elif entry["completed"]:
-            if vanity_seconds >= REQUIRED_VANITY_SECONDS:
-                status_line = f"{emoji.GIFT} Ready — claiming automatically..."
-            else:
-                remaining = REQUIRED_VANITY_SECONDS - vanity_seconds
-                status_line = (
-                    f"{emoji.GIFT} Completed — waiting on {vanity.format_duration(remaining)} "
-                    f"more vanity time today, then it auto-claims."
-                )
+            status_line = f"{emoji.GIFT} Completed"
             value = f"{status_line}\n{reward_line}"
         elif qdef["target"] == 1:
             value = f"{NOT_DONE} Not completed yet\n{reward_line}"
