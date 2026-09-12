@@ -13,14 +13,15 @@ A quest completing does NOT push a reward to Jarvis by itself. Instead:
      quest_progress in db.py) — Jarvis never sees any of this until
      step 3.
   2. The moment a quest's target is hit, that quest is marked
-     "completed" here only, and a heads-up gets posted to the quest log
-     channel.
+     "completed" here only, and a heads-up is posted to the quest log
+     channel *and* DM'd to the user.
   3. Claiming is fully automatic — it happens the instant the quest's
      target is hit, if the member already has REQUIRED_VANITY_SECONDS of
      vanity time today (see vanity.get_today_vanity_seconds()). If not,
      the quest is left completed-but-locked and auto_claim_ready() picks
      it up the moment vanity catches up later that day — no command
-     required, ever.
+     required, ever. Either way, claiming also posts to the quest log
+     channel and DMs the user.
 
 Each quest type resets independently at the UTC day boundary (00:00
 UTC) — a fresh baseline gets snapshotted the next time progress is
@@ -130,10 +131,10 @@ async def check_and_complete(bot, member: discord.Member) -> None:
 
     Marks finished quests completed. If member already has today's 2h
     vanity requirement covered, the reward is delivered immediately —
-    fully automatic, no command needed. Otherwise the quest is left
-    completed-but-locked and a heads-up is posted to the quest log —
-    see auto_claim_ready(), which picks these up the moment vanity
-    catches up later that day."""
+    fully automatic, no command needed — with a channel log post and DM.
+    Otherwise the quest is left completed-but-locked and a heads-up is
+    posted to the quest log *and* DM'd — see auto_claim_ready(), which
+    picks these up the moment vanity catches up later that day."""
     entries = await _ensure_quests(member.id)
     counters = await db.get_quest_counters(member.id)
 
@@ -157,6 +158,7 @@ async def check_and_complete(bot, member: discord.Member) -> None:
             await _deliver_claim(bot, member, quest_id, qdef)
         else:
             await _post_ready_log(bot, member, qdef["desc"])
+            await _dm_quest_ready(member, qdef["desc"], vanity_seconds)
 
 
 async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
@@ -185,6 +187,29 @@ async def _post_ready_log(bot, member: discord.Member, quest_desc: str) -> None:
         await channel.send(embed=embed)
     except discord.HTTPException:
         pass
+
+
+async def _dm_quest_ready(member: discord.Member, quest_desc: str, vanity_seconds: float) -> bool:
+    """DM the user that a quest just completed but is waiting on today's
+    2h vanity requirement before it auto-claims. Mirrors the channel-log
+    version of this same event. Stays silent if their DMs are closed."""
+    remaining = max(0, REQUIRED_VANITY_SECONDS - vanity_seconds)
+    embed = discord.Embed(
+        title=f"{emoji.SUCCESS} Daily Quest Completed!",
+        description=(
+            f"You've finished the **{quest_desc}** daily quest!\n"
+            f"It'll be claimed automatically once you've kept your vanity status up "
+            f"for {vanity.format_duration(REQUIRED_VANITY_SECONDS)} today — "
+            f"you're **{vanity.format_duration(remaining)}** away.\n\n"
+            f"Check your progress any time with `-quest`."
+        ),
+        color=discord.Color.blurple(),
+    )
+    try:
+        await member.send(embed=embed)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
 
 
 async def _post_claim_log(bot, member: discord.Member, quest_desc: str, reward: int) -> None:
