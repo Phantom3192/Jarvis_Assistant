@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import os
 import time
@@ -260,9 +261,9 @@ async def resetvanitydata(ctx, confirm: str = None):
     await ctx.send(f"{emoji.DELETE} Vanity data reset — cleared {count} user record(s). Config was left untouched.")
 
 
-@bot.command(name="vanitytime")
-async def vanitytime(ctx, member: discord.Member = None):
-    member = member or ctx.author
+async def build_vanitytime_embed(member: discord.Member) -> discord.Embed:
+    """Shared by both the -vanitytime prefix command and the /vanitytime
+    slash command so they always show identical content."""
     udata = await db.get_user(member.id)
     total = udata["total_seconds"]
     cycle = udata["cycle_seconds"]
@@ -287,6 +288,13 @@ async def vanitytime(ctx, member: discord.Member = None):
         inline=True,
     )
     embed.set_thumbnail(url=member.display_avatar.url)
+    return embed
+
+
+@bot.command(name="vanitytime")
+async def vanitytime(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    embed = await build_vanitytime_embed(member)
     await ctx.send(embed=embed)
 
 
@@ -301,6 +309,65 @@ async def quest_cmd(ctx, member: discord.Member = None):
     member = member or ctx.author
     embed = await quests.status_embed(member)
     await ctx.send(embed=embed)
+
+
+# ---------------------------------------------------------------------------
+# Slash commands (public-only — owner commands stay prefix-only since
+# Discord shows slash commands to every member regardless of permission
+# checks done inside the callback, which would just be confusing here).
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="quests", description="Show today's quests and their progress/claim status.")
+@app_commands.describe(member="Whose quests to show (defaults to you)")
+async def quests_slash(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    embed = await quests.status_embed(target)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="vanitytime", description="Show vanity time, lifetime total, and reward cycle progress.")
+@app_commands.describe(member="Whose vanity time to show (defaults to you)")
+async def vanitytime_slash(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    embed = await build_vanitytime_embed(target)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="help", description="List every command available to members.")
+async def help_slash(interaction: discord.Interaction):
+    prefix = bot.command_prefix if isinstance(bot.command_prefix, str) else "-"
+    embed, view = help_menu.build_public_help(prefix, interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view)
+    view.message = await interaction.original_response()
+
+
+_slash_synced = False
+
+
+@bot.listen("on_ready")
+async def sync_slash_commands_once():
+    """Sync /quests, /vanitytime, /help. Synced to the locked guild (see
+    -setguild) when one's configured, since guild-scoped syncs show up
+    instantly; a global sync can take up to an hour to propagate. Only
+    runs once per process — on_ready can fire again on reconnect and
+    re-syncing every time risks Discord's sync rate limit."""
+    global _slash_synced
+    if _slash_synced:
+        return
+    _slash_synced = True
+
+    guild_id = vanity.cfg_int("guild_id")
+    try:
+        if guild_id:
+            guild_obj = discord.Object(id=guild_id)
+            bot.tree.copy_global_to(guild=guild_obj)
+            await bot.tree.sync(guild=guild_obj)
+            print(f"Slash commands synced to guild {guild_id}.")
+        else:
+            await bot.tree.sync()
+            print("Slash commands synced globally (can take up to an hour to appear everywhere).")
+    except discord.HTTPException as e:
+        print(f"Slash command sync failed: {e}")
 
 
 @bot.command(name="setquestlogchannel")
