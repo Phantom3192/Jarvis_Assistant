@@ -20,7 +20,13 @@ intents.message_content = True
 # help_command=None: we register our own -help (and -adminhelp) via
 # help_menu.setup_help() below, so the library's default plain-text help
 # is turned off to avoid clashing with it.
-bot = commands.Bot(command_prefix="-", intents=intents, help_command=None)
+#
+# command_prefix: when_mentioned_or("-") accepts BOTH "-command" and
+# "@Jarvis_Assistant command" (a mention followed by a space and the
+# command name) for every single command registered on the bot — no
+# per-command changes needed. Discord.py handles stripping the mention
+# itself; this just adds it as a second valid prefix alongside "-".
+bot = commands.Bot(command_prefix=commands.when_mentioned_or("-"), intents=intents, help_command=None)
 
 # Only this Discord user ID can run the config commands below.
 # Replace 0 with your own Discord user ID (Developer Mode -> right-click
@@ -288,10 +294,10 @@ async def vanitytime(ctx, member: discord.Member = None):
 # Quest commands
 # ---------------------------------------------------------------------------
 
-@bot.command(name="quest")
+@bot.command(name="quest", aliases=["quests", "q"])
 async def quest_cmd(ctx, member: discord.Member = None):
-    """-quest [@user] — shows today's quests (all of them) and their
-    progress/claim status."""
+    """-quest / -quests / -q [@user] — shows today's quests (all of them)
+    and their progress/claim status."""
     member = member or ctx.author
     embed = await quests.status_embed(member)
     await ctx.send(embed=embed)
