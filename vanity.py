@@ -192,6 +192,7 @@ async def apply_vanity_added(bot, member: discord.Member):
         member.id, True, session_start,
         udata["total_seconds"], udata["cycle_seconds"],
         udata["day_date"], udata["day_seconds"],
+        session_orig_start=session_start,
     )
 
     role = member.guild.get_role(cfg_int("role_id"))
@@ -210,8 +211,12 @@ async def apply_vanity_removed(bot, member: discord.Member):
     if not udata["active"]:
         return
 
-    session_start = udata["session_start"] or time.time()
-    session_seconds = time.time() - session_start
+    # Use session_orig_start (the true moment this session began) rather
+    # than session_start, which is a rolling per-checkpoint timestamp and
+    # would otherwise understate session_seconds down to however long ago
+    # the last minute-checkpoint happened to run.
+    session_orig_start = udata["session_orig_start"] or udata["session_start"] or time.time()
+    session_seconds = time.time() - session_orig_start
     new_total = udata["total_seconds"] + session_seconds
     new_cycle = udata["cycle_seconds"] + session_seconds
 
@@ -226,7 +231,7 @@ async def apply_vanity_removed(bot, member: discord.Member):
         new_cycle -= REWARD_THRESHOLD_SECONDS
         rewarded = True
 
-    await db.upsert_user(member.id, False, None, new_total, new_cycle, today, new_day)
+    await db.upsert_user(member.id, False, None, new_total, new_cycle, today, new_day, session_orig_start=None)
 
     role = member.guild.get_role(cfg_int("role_id"))
     if role and role in member.roles:
@@ -281,7 +286,14 @@ async def check_cycle_progress(bot):
         # Roll the checkpoint forward to "now" regardless of whether a
         # reward fired, so day_seconds/total/cycle don't fall behind for
         # someone who keeps vanity up for hours without a reward crossing.
-        await db.upsert_user(udata["user_id"], True, now, new_total, new_cycle, today, new_day)
+        # session_orig_start is carried through unchanged — it's the true
+        # session start and must survive every checkpoint, otherwise the
+        # "Session Duration" shown when vanity is later removed would only
+        # reflect time since the last checkpoint instead of the full session.
+        await db.upsert_user(
+            udata["user_id"], True, now, new_total, new_cycle, today, new_day,
+            session_orig_start=udata["session_orig_start"] or udata["session_start"],
+        )
 
         guild = bot.get_guild(guild_id) if guild_id else (bot.guilds[0] if bot.guilds else None)
         member = guild.get_member(udata["user_id"]) if guild else None
@@ -316,10 +328,15 @@ async def initial_scan(bot):
             udata = await db.get_user(member.id)
             currently_has = has_vanity(member)
             if currently_has and not udata["active"]:
+                # Bot was down while they had vanity up; we have no record
+                # of exactly when it started, so the new session (and its
+                # eventual "Session Duration") starts counting from now.
+                now = time.time()
                 await db.upsert_user(
-                    member.id, True, time.time(),
+                    member.id, True, now,
                     udata["total_seconds"], udata["cycle_seconds"],
                     udata["day_date"], udata["day_seconds"],
+                    session_orig_start=now,
                 )
             elif not currently_has and udata["active"]:
                 # they had it before a restart but not anymore; close out silently
@@ -327,4 +344,5 @@ async def initial_scan(bot):
                     member.id, False, None,
                     udata["total_seconds"], udata["cycle_seconds"],
                     udata["day_date"], udata["day_seconds"],
+                    session_orig_start=None,
                 )
