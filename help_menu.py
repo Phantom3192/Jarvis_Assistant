@@ -48,7 +48,7 @@ PUBLIC_CATEGORIES = [
             ("-quest [@user]",
              "Show ALL of today's quests at once, with each one's progress "
              "and claim status (claiming is fully automatic — see below). "
-             "Defaults to you."),
+             "Defaults to you. Aliases: -quests, -q."),
         ],
     },
 ]
@@ -196,7 +196,7 @@ def setup_help(bot, owner_id: int):
     @bot.command(name="help")
     async def help_cmd(ctx):
         """-help — lists every command available to members."""
-        footer = f"Prefix: {prefix}  •  Bot owner: {prefix}adminhelp"
+        footer = f"Prefix: {prefix}  or  @mention  •  Bot owner: {prefix}adminhelp"
         embed = _build_home_embed(
             title=f"{emoji.HELP_BOOK} J.A.R.V.I.S. Help",
             description="Here's what I can do. Pick a category below to see the commands.",
@@ -214,7 +214,7 @@ def setup_help(bot, owner_id: int):
             await ctx.send(f"{emoji.DENIED} Only the bot owner can use this command.")
             return
 
-        footer = f"Prefix: {prefix}  •  Bot owner only"
+        footer = f"Prefix: {prefix}  or  @mention  •  Bot owner only"
         embed = _build_home_embed(
             title=f"{emoji.HELP_TOOLS} Admin Commands",
             description=(
