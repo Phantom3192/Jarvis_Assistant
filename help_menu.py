@@ -190,21 +190,29 @@ class HelpView(discord.ui.View):
 # Setup — registers -help and -adminhelp on the given bot
 # ---------------------------------------------------------------------------
 
+def build_public_help(prefix: str, author_id: int):
+    """Build the (embed, view) pair for the public help menu. Shared by
+    both the -help prefix command and the /help slash command so they
+    always show identical content."""
+    footer = f"Prefix: {prefix}  or  @mention  •  Bot owner: {prefix}adminhelp"
+    embed = _build_home_embed(
+        title=f"{emoji.HELP_BOOK} J.A.R.V.I.S. Help",
+        description="Here's what I can do. Pick a category below to see the commands.",
+        categories=PUBLIC_CATEGORIES,
+        color=discord.Color.blurple(),
+        footer=footer,
+    )
+    view = HelpView(PUBLIC_CATEGORIES, embed, discord.Color.blurple(), footer, author_id)
+    return embed, view
+
+
 def setup_help(bot, owner_id: int):
     prefix = bot.command_prefix if isinstance(bot.command_prefix, str) else "-"
 
     @bot.command(name="help")
     async def help_cmd(ctx):
         """-help — lists every command available to members."""
-        footer = f"Prefix: {prefix}  or  @mention  •  Bot owner: {prefix}adminhelp"
-        embed = _build_home_embed(
-            title=f"{emoji.HELP_BOOK} J.A.R.V.I.S. Help",
-            description="Here's what I can do. Pick a category below to see the commands.",
-            categories=PUBLIC_CATEGORIES,
-            color=discord.Color.blurple(),
-            footer=footer,
-        )
-        view = HelpView(PUBLIC_CATEGORIES, embed, discord.Color.blurple(), footer, ctx.author.id)
+        embed, view = build_public_help(prefix, ctx.author.id)
         view.message = await ctx.send(embed=embed, view=view)
 
     @bot.command(name="adminhelp")
