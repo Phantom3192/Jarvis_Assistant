@@ -297,15 +297,6 @@ async def quest_cmd(ctx, member: discord.Member = None):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="claimquest")
-async def claimquest(ctx, quest_id: str = None):
-    """-claimquest [quest_id] — claim quest(s). Omit quest_id to claim
-    every quest that's currently ready; pass one (see -quest for the IDs)
-    to claim just that one. Requires at least 2h of vanity time today
-    (see -vanitytime)."""
-    await ctx.send(await quests.claim(bot, ctx.author, quest_id))
-
-
 @bot.command(name="setquestlogchannel")
 @is_owner()
 async def setquestlogchannel(ctx, channel: discord.TextChannel):
