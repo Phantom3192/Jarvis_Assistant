@@ -47,11 +47,8 @@ PUBLIC_CATEGORIES = [
         "commands": [
             ("-quest [@user]",
              "Show ALL of today's quests at once, with each one's progress "
-             "and claim status. Defaults to you."),
-            ("-claimquest [quest_id]",
-             "Claim quest reward(s). Omit the ID to claim every quest that's "
-             "currently ready at once, or pass one (shown on -quest) to claim "
-             "just that quest. Requires at least 2h of vanity time today."),
+             "and claim status (claiming is fully automatic — see below). "
+             "Defaults to you."),
         ],
     },
 ]
