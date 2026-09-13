@@ -35,7 +35,7 @@ PUBLIC_CATEGORIES = [
         "blurb": "Check your vanity time and reward cycle progress.",
         "commands": [
             ("-vanitytime [@user]",
-             "Show today's vanity time, lifetime total, current 24h cycle "
+             "Show today's vanity time, lifetime total, current 12h cycle "
              "progress, and time until the next reward. Defaults to you."),
         ],
     },
