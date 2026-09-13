@@ -129,15 +129,15 @@ async def send_reward_embed(bot, member: discord.Member, amount: int, delivered:
 
     if delivered:
         embed = discord.Embed(
-            title=f"{emoji.CELEBRATE} 24h Vanity Reward",
-            description=f"**{member}** completed a full 24h vanity cycle and earned **{amount:,} JC**!",
+            title=f"{emoji.CELEBRATE} 12h Vanity Reward",
+            description=f"**{member}** completed a full 12h vanity cycle and earned **{amount:,} JC**!",
             color=discord.Color.gold(),
         )
     else:
         embed = discord.Embed(
-            title=f"{emoji.WARNING} 24h Vanity Reward — Delivery Failed",
+            title=f"{emoji.WARNING} 12h Vanity Reward — Delivery Failed",
             description=(
-                f"**{member}** completed a 24h vanity cycle, but Jarvis didn't "
+                f"**{member}** completed a 12h vanity cycle, but Jarvis didn't "
                 f"accept the reward call. Check `JARVIS_WEBHOOK_URL`/`JARVIS_WEBHOOK_SECRET`."
             ),
             color=discord.Color.orange(),
@@ -159,11 +159,11 @@ async def dm_reward_success(member: discord.Member, amount: int) -> bool:
     # around !balance) and swallows everything between them into one
     # giant inline-code block. Quotes don't have that failure mode.
     embed = discord.Embed(
-        title=f"{emoji.CELEBRATE} 24h Vanity Reward!",
+        title=f"{emoji.CELEBRATE} 12h Vanity Reward!",
         description=(
-            f'You kept "{vanity_text}" in your status for a full 24 hours '
+            f'You kept "{vanity_text}" in your status for a full 12 hours '
             f"and earned **{amount:,} JC**! It's already in your Jarvis balance — "
-            f"check with !balance.\n\nKeep it up — your next 24h cycle just started."
+            f"check with !balance.\n\nKeep it up — your next 12h cycle just started."
         ),
         color=discord.Color.gold(),
     )
@@ -211,17 +211,27 @@ async def apply_vanity_removed(bot, member: discord.Member):
     if not udata["active"]:
         return
 
-    # Use session_orig_start (the true moment this session began) rather
-    # than session_start, which is a rolling per-checkpoint timestamp and
-    # would otherwise understate session_seconds down to however long ago
-    # the last minute-checkpoint happened to run.
+    # session_orig_start is the true moment this session began — used ONLY
+    # for the "Session Duration" shown in the log embed below.
     session_orig_start = udata["session_orig_start"] or udata["session_start"] or time.time()
     session_seconds = time.time() - session_orig_start
-    new_total = udata["total_seconds"] + session_seconds
-    new_cycle = udata["cycle_seconds"] + session_seconds
+
+    # total_seconds/cycle_seconds/day_seconds must NOT be incremented by
+    # the full session_seconds: check_cycle_progress() already rolls
+    # elapsed-since-last-checkpoint into those fields every minute while
+    # the session is active, so by the time we get here they already
+    # reflect (almost) this whole session. Adding session_seconds again
+    # on top double-counts it — that's what was making the 12h reward
+    # cycle fire roughly twice as fast as it should. Only the sliver of
+    # time since the last checkpoint (session_start) is actually new.
+    last_checkpoint = udata["session_start"] or session_orig_start
+    increment = max(0.0, time.time() - last_checkpoint)
+
+    new_total = udata["total_seconds"] + increment
+    new_cycle = udata["cycle_seconds"] + increment
 
     today = db.today_str()
-    new_day = (udata["day_seconds"] + session_seconds) if udata["day_date"] == today else session_seconds
+    new_day = (udata["day_seconds"] + increment) if udata["day_date"] == today else increment
 
     # The cycle pauses right here — new_cycle is saved as-is (not reset),
     # so whenever this user re-adds the vanity link, apply_vanity_added()
