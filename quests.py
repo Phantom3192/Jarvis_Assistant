@@ -47,7 +47,7 @@ REQUIRED_VANITY_SECONDS = 2 * 60 * 60  # 2h of vanity today, required to claim
 # Small per-quest icon shown in the field name in -quest — purely cosmetic,
 # doesn't affect claiming/tracking logic at all.
 QUEST_ICONS = {
-    "chat150": "<a:chats:1547570605501587476>",
+    "chat200": "<a:chats:1547570605501587476>",
     "bump_server": "<a:uptime:1547571238350626927>",
     "open_box": "<a:gifts:1547574389338415185>",
 }
@@ -75,7 +75,7 @@ DISBOARD_BOT_ID = 302050872383242240
 # quest_counters) — progress is measured as get(counters) - baseline,
 # where baseline is snapshotted the moment the quest is assigned.
 QUEST_DEFS: dict[str, dict] = {
-    "chat150": {
+    "chat200": {
         "desc": "Send 200 Messages",
         "target": 200,
         "reward": 2_000,
@@ -233,7 +233,7 @@ async def _post_claim_log(bot, member: discord.Member, quest_desc: str, reward: 
 
 async def _dm_quest_claimed(member: discord.Member, quest_desc: str, reward: int) -> bool:
     """DM the user that a quest's reward landed, mirroring the vanity
-    24h-reward DM style. Stays silent if their DMs are closed."""
+    12h-reward DM style. Stays silent if their DMs are closed."""
     embed = discord.Embed(
         title=f"{emoji.SUCCESS} Daily Quest Completed!",
         description=(
