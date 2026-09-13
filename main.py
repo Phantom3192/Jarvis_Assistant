@@ -159,7 +159,7 @@ async def on_member_remove(member: discord.Member):
 
 
 # ---------------------------------------------------------------------------
-# 24h vanity → JC reward cycle (checked periodically so it fires even if
+# 12h vanity → JC reward cycle (checked periodically so it fires even if
 # someone never removes their vanity link). This same loop also keeps
 # today's vanity total fresh for the quest claim gate — see vanity.py.
 # ---------------------------------------------------------------------------
@@ -231,7 +231,7 @@ async def vanityconfig(ctx):
 async def testreward(ctx, member: discord.Member = None, amount: int = None):
     """-testreward [@user] [amount] — owner-only. Manually fires the full
     reward flow (webhook call to Jarvis + log embed + DM) without waiting
-    for a real 24h cycle. Defaults to yourself and the normal reward
+    for a real 12h cycle. Defaults to yourself and the normal reward
     amount if not specified. Does NOT touch the user's actual cycle
     progress in the DB — it's purely for testing the Jarvis connection
     and DM delivery."""
@@ -281,7 +281,7 @@ async def build_vanitytime_embed(member: discord.Member) -> discord.Embed:
     )
     embed.add_field(name="Today", value=vanity.format_duration(today_seconds), inline=True)
     embed.add_field(name="Total (lifetime)", value=vanity.format_duration(total), inline=True)
-    embed.add_field(name="Current 24h cycle", value=vanity.format_duration(cycle), inline=True)
+    embed.add_field(name="Current 12h cycle", value=vanity.format_duration(cycle), inline=True)
     embed.add_field(
         name="Next reward in",
         value=vanity.format_duration(remaining) if remaining > 0 else f"Any moment now {emoji.GIFT}",
