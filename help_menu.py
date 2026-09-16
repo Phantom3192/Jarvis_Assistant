@@ -1,239 +1,423 @@
-"""
-help_menu.py — Embed + dropdown help menus
-===========================================
-
-Two entry points, wired up from main.py via setup_help(bot, owner_id):
-
-  -help       Every member. Shows the public commands (vanity time,
-              quests). Mentions -adminhelp exists but doesn't reveal
-              its contents.
-  -adminhelp  Bot owner only. Shows every owner-only config/testing
-              command. Silently refuses (same message on_command_error
-              already uses) for anyone else.
-
-Both render a "home" embed with one field per category, plus a select
-menu (dropdown) that swaps the embed to a per-category command list —
-same browsing pattern as J.A.R.V.I.S.'s existing admin menu, rebuilt
-here for this bot's actual command set.
-"""
 import discord
+from discord import app_commands
+from discord.ext import commands, tasks
+import os
+import time
+import asyncio
 
+import db
+import vanity
+import webhook
+import quests
+import boxes
+import help_menu
 import emoji
+import automod
+
+intents = discord.Intents.default()
+intents.members = True
+intents.presences = True
+intents.message_content = True
+
+# help_command=None: we register our own -help (and -adminhelp) via
+# help_menu.setup_help() below, so the library's default plain-text help
+# is turned off to avoid clashing with it.
+#
+# command_prefix: when_mentioned_or("-") accepts BOTH "-command" and
+# "@Jarvis_Assistant command" (a mention followed by a space and the
+# command name) for every single command registered on the bot — no
+# per-command changes needed. Discord.py handles stripping the mention
+# itself; this just adds it as a second valid prefix alongside "-".
+bot = commands.Bot(command_prefix=commands.when_mentioned_or("-"), intents=intents, help_command=None)
+
+# Only this Discord user ID can run the config commands below.
+# Replace 0 with your own Discord user ID (Developer Mode -> right-click
+# your name -> Copy User ID).
+OWNER_ID = 1049677357927125012
+
+# Registers -help (all members) and -adminhelp (owner only) — embed +
+# dropdown category browser, see help_menu.py.
+help_menu.setup_help(bot, OWNER_ID)
+
+# Registers -banimage / -unbanimage / -listbannedimages /
+# -setautomodlogchannel (owner only) — see automod.py.
+automod.setup(bot, OWNER_ID)
+
+
+def is_owner():
+    async def predicate(ctx):
+        return ctx.author.id == OWNER_ID
+    return commands.check(predicate)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    # Unwrap discord.py's wrapper so isinstance checks below see the real
+    # error, not a generic CommandInvokeError shell around it.
+    error = getattr(error, "original", error)
+
+    if isinstance(error, commands.CommandNotFound):
+        return  # someone typo'd a command or another bot shares the "-" prefix — stay quiet
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send(f"{emoji.DENIED} Only the bot owner can use this command.")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"{emoji.WARNING} Missing an argument: `{error.param.name}`. Check the command's usage.")
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(f"{emoji.WARNING} Couldn't understand one of the arguments: {error}")
+        return
+
+    # Anything else is unexpected — log the full traceback to console for
+    # debugging, but ALWAYS tell the user something went wrong instead of
+    # silently doing nothing, which is what re-raising here used to do.
+    print(f"[on_command_error] Unhandled error in command '{ctx.command}': {error!r}")
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+    await ctx.send(f"{emoji.ERROR} Something went wrong running that command: `{error}`")
 
 
 # ---------------------------------------------------------------------------
-# Command catalog
+# Events
 # ---------------------------------------------------------------------------
-# Each category: emoji, label, one-line blurb (shown on the home embed),
-# and a list of (usage, description) shown when the category is opened.
 
-PUBLIC_CATEGORIES = [
-    {
-        "key": "vanity",
-        "emoji": emoji.CAT_VANITY,
-        "label": "Vanity & Rewards",
-        "blurb": "Check your vanity time and reward cycle progress.",
-        "commands": [
-            ("-vanitytime [@user]",
-             "Show today's vanity time, lifetime total, current 12h cycle "
-             "progress, and time until the next reward. Defaults to you."),
-        ],
-    },
-    {
-        "key": "quests",
-        "emoji": emoji.CAT_QUESTS,
-        "label": "Quests",
-        "blurb": "Daily quests and claiming your rewards.",
-        "commands": [
-            ("-quest [@user]",
-             "Show ALL of today's quests at once, with each one's progress "
-             "and claim status (claiming is fully automatic — see below). "
-             "Defaults to you. Aliases: -quests, -q."),
-        ],
-    },
-]
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print("Vanity bot is running.")
 
-ADMIN_CATEGORIES = [
-    {
-        "key": "vanity_setup",
-        "emoji": emoji.CAT_VANITY_SETUP,
-        "label": "Vanity Setup",
-        "blurb": "Configure the vanity text, role, log channel and tracked server.",
-        "commands": [
-            ("-setvanity <text>",
-             "Set the vanity status text Jarvis watches for."),
-            ("-setrole @role",
-             "Set the role granted while a member's vanity is active."),
-            ("-setlogchannel #channel",
-             "Set the channel where vanity reward logs are posted."),
-            ("-setguild",
-             "Lock vanity tracking to the current server."),
-            ("-vanityconfig",
-             "View the current vanity config (text, role, channels, guild lock)."),
-        ],
-    },
-    {
-        "key": "testing",
-        "emoji": emoji.CAT_TESTING,
-        "label": "Testing & Data",
-        "blurb": "Manually trigger rewards and manage stored vanity data.",
-        "commands": [
-            ("-testreward [@user] [amount]",
-             "Manually fire the full reward flow (webhook + log embed + DM) "
-             "without waiting for a real cycle. Doesn't touch real cycle "
-             "progress — for testing only."),
-            ("-resetvanitydata confirm",
-             "Wipe every user's vanity time and cycle progress. Config is "
-             "left untouched. Requires the literal word `confirm`."),
-        ],
-    },
-    {
-        "key": "quest_setup",
-        "emoji": emoji.CAT_QUEST_SETUP,
-        "label": "Quest Setup",
-        "blurb": "Configure where quest completions and claims get logged.",
-        "commands": [
-            ("-setquestlogchannel #channel",
-             "Set the channel where quest completions/claims are logged."),
-            ("-questlogchannel",
-             "View the current quest log channel."),
-        ],
-    },
-]
+
+@bot.event
+async def on_presence_update(before: discord.Member, after: discord.Member):
+    guild_id = vanity.cfg_int("guild_id")
+    if guild_id and after.guild.id != guild_id:
+        return
+
+    had = vanity.has_vanity(before)
+    has = vanity.has_vanity(after)
+
+    if has and not had:
+        await vanity.apply_vanity_added(bot, after)
+    elif had and not has:
+        await vanity.apply_vanity_removed(bot, after)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    # Image automod — see automod.py. If this message contained a banned
+    # image, it's already been deleted and the author timed out, so skip
+    # quest tracking / box drops / command parsing on it entirely.
+    if await automod.check_message(bot, message):
+        return
+
+    # Quest progress tracking (message count + bump detection) — see
+    # quests.py — and random box drops — see boxes.py. Neither blocks
+    # normal command handling below.
+    await quests.on_message_progress(bot, message)
+    if message.guild is not None and not message.author.bot:
+        await boxes.maybe_drop(bot, message.author)
+    await bot.process_commands(message)
+
+
+_scan_done = False
+
+
+@bot.listen("on_ready")
+async def start_scan_once():
+    global _scan_done
+    if not _scan_done:
+        _scan_done = True
+        await vanity.initial_scan(bot)
 
 
 # ---------------------------------------------------------------------------
-# Embed builders
+# Presence: keep the bot's status showing live member count
 # ---------------------------------------------------------------------------
 
-def _build_home_embed(title, description, categories, color, footer):
-    embed = discord.Embed(title=title, description=description, color=color)
-    for cat in categories:
-        embed.add_field(
-            name=f"{cat['emoji']} {cat['label']}",
-            value=cat["blurb"],
-            inline=True,
+async def refresh_presence():
+    guild_id = vanity.cfg_int("guild_id")
+    guild = bot.get_guild(guild_id) if guild_id else None
+
+    if guild is None:
+        # No guild locked via -setguild yet — fall back to the first
+        # server the bot is in, since this bot is meant for one server.
+        guild = bot.guilds[0] if bot.guilds else None
+
+    member_count = guild.member_count if guild else 0
+    activity = discord.CustomActivity(name=f"J.A.R.V.I.S. : {member_count:,} members")
+    await bot.change_presence(activity=activity)
+
+
+@tasks.loop(minutes=10)
+async def presence_loop():
+    await refresh_presence()
+
+
+@bot.listen("on_ready")
+async def start_presence_loop():
+    if not presence_loop.is_running():
+        presence_loop.start()  # fires once immediately, then every 10 min
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    await refresh_presence()
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await refresh_presence()
+
+
+# ---------------------------------------------------------------------------
+# 12h vanity → JC reward cycle (checked periodically so it fires even if
+# someone never removes their vanity link). This same loop also keeps
+# today's vanity total fresh for the quest claim gate — see vanity.py.
+# ---------------------------------------------------------------------------
+
+@tasks.loop(minutes=1)
+async def cycle_reward_loop():
+    await vanity.check_cycle_progress(bot)
+
+
+@bot.listen("on_ready")
+async def start_cycle_reward_loop():
+    if not cycle_reward_loop.is_running():
+        cycle_reward_loop.start()
+
+
+# ---------------------------------------------------------------------------
+# Admin commands (configure the bot without editing files)
+# ---------------------------------------------------------------------------
+
+@bot.command(name="setvanity")
+@is_owner()
+async def setvanity(ctx, *, text: str):
+    vanity.config["vanity_text"] = text
+    await db.set_config("vanity_text", text)
+    await ctx.send(f"{emoji.SUCCESS} Vanity text set to `{text}`")
+
+
+@bot.command(name="setrole")
+@is_owner()
+async def setrole(ctx, role: discord.Role):
+    vanity.config["role_id"] = str(role.id)
+    await db.set_config("role_id", role.id)
+    await ctx.send(f"{emoji.SUCCESS} Vanity role set to {role.mention}")
+
+
+@bot.command(name="setlogchannel")
+@is_owner()
+async def setlogchannel(ctx, channel: discord.TextChannel):
+    vanity.config["log_channel_id"] = str(channel.id)
+    await db.set_config("log_channel_id", channel.id)
+    await ctx.send(f"{emoji.SUCCESS} Log channel set to {channel.mention}")
+
+
+@bot.command(name="setguild")
+@is_owner()
+async def setguild(ctx):
+    vanity.config["guild_id"] = str(ctx.guild.id)
+    await db.set_config("guild_id", ctx.guild.id)
+    await ctx.send(f"{emoji.SUCCESS} This server is now the tracked guild.")
+
+
+@bot.command(name="vanityconfig")
+@is_owner()
+async def vanityconfig(ctx):
+    role = ctx.guild.get_role(vanity.cfg_int("role_id"))
+    channel = bot.get_channel(vanity.cfg_int("log_channel_id"))
+    quest_channel = bot.get_channel(vanity.cfg_int("quest_log_channel_id"))
+    embed = discord.Embed(title=f"{emoji.CONFIG} Vanity Bot Config", color=discord.Color.blurple())
+    embed.add_field(name="Vanity Text", value=f"`{vanity.config.get('vanity_text')}`", inline=False)
+    embed.add_field(name="Role", value=role.mention if role else "Not set", inline=True)
+    embed.add_field(name="Log Channel", value=channel.mention if channel else "Not set", inline=True)
+    embed.add_field(name="Guild Lock", value=str(vanity.cfg_int("guild_id") or "Any server"), inline=True)
+    embed.add_field(name="Quest Log Channel", value=quest_channel.mention if quest_channel else "Not set", inline=True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="testreward")
+@is_owner()
+async def testreward(ctx, member: discord.Member = None, amount: int = None):
+    """-testreward [@user] [amount] — owner-only. Manually fires the full
+    reward flow (webhook call to Jarvis + log embed + DM) without waiting
+    for a real 12h cycle. Defaults to yourself and the normal reward
+    amount if not specified. Does NOT touch the user's actual cycle
+    progress in the DB — it's purely for testing the Jarvis connection
+    and DM delivery."""
+    member = member or ctx.author
+    test_amount = amount if amount is not None else vanity.REWARD_AMOUNT_JC
+    await ctx.send(f"{emoji.TEST} Testing reward flow for {member.mention} — {test_amount:,} JC...")
+    await vanity.grant_cycle_reward(bot, member, amount=test_amount)
+    await ctx.send(f"{emoji.SUCCESS} Test complete — check the log channel and the target user's DMs.")
+
+
+@bot.command(name="resetvanitydata")
+@is_owner()
+async def resetvanitydata(ctx, confirm: str = None):
+    """-resetvanitydata confirm — owner-only. Wipes everyone's vanity
+    data (active status, session timers, lifetime totals, cycle
+    progress, today's total) so tracking starts fresh for all users.
+    Config (vanity text, role, log channel, guild lock) is untouched.
+    Requires typing the literal word "confirm" to avoid a fat-finger wipe."""
+    if confirm != "confirm":
+        await ctx.send(
+            f"{emoji.WARNING} This wipes **every user's** vanity time and cycle progress "
+            "(config stays untouched). Run `-resetvanitydata confirm` if you're sure."
         )
-    embed.set_footer(text=footer)
-    return embed
+        return
+
+    count = await db.reset_all_user_data()
+    await ctx.send(f"{emoji.DELETE} Vanity data reset — cleared {count} user record(s). Config was left untouched.")
 
 
-def _build_category_embed(category, color, footer):
+async def build_vanitytime_embed(member: discord.Member) -> discord.Embed:
+    """Shared by both the -vanitytime prefix command and the /vanitytime
+    slash command so they always show identical content."""
+    udata = await db.get_user(member.id)
+    total = udata["total_seconds"]
+    cycle = udata["cycle_seconds"]
+    today_seconds = udata["day_seconds"] if udata["day_date"] == db.today_str() else 0
+    if udata["active"]:
+        elapsed = time.time() - udata["session_start"]
+        total += elapsed
+        cycle += elapsed
+        today_seconds += elapsed
+    remaining = max(0, vanity.REWARD_THRESHOLD_SECONDS - cycle)
     embed = discord.Embed(
-        title=f"{category['emoji']} {category['label']}",
-        description=category["blurb"],
-        color=color,
+        title=f"{emoji.CELEBRATE} Vanity Time",
+        description=f"{member.mention}'s vanity stats:",
+        color=discord.Color.gold(),
     )
-    for usage, desc in category["commands"]:
-        embed.add_field(name=f"`{usage}`", value=desc, inline=False)
-    embed.set_footer(text=footer)
+    embed.add_field(name="Today", value=vanity.format_duration(today_seconds), inline=True)
+    embed.add_field(name="Total (lifetime)", value=vanity.format_duration(total), inline=True)
+    embed.add_field(name="Current 12h cycle", value=vanity.format_duration(cycle), inline=True)
+    embed.add_field(
+        name="Next reward in",
+        value=vanity.format_duration(remaining) if remaining > 0 else f"Any moment now {emoji.GIFT}",
+        inline=True,
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
     return embed
 
 
-# ---------------------------------------------------------------------------
-# View / dropdown
-# ---------------------------------------------------------------------------
-
-class _CategorySelect(discord.ui.Select):
-    def __init__(self, categories, color, footer, author_id):
-        self.categories = {c["key"]: c for c in categories}
-        self.color = color
-        self.footer = footer
-        self.author_id = author_id
-
-        options = [
-            discord.SelectOption(
-                label="Home", description="Back to the overview", emoji=emoji.HELP_HOME, value="__home__",
-            )
-        ] + [
-            discord.SelectOption(
-                label=c["label"], description=c["blurb"][:100], emoji=c["emoji"], value=c["key"],
-            )
-            for c in categories
-        ]
-        super().__init__(placeholder="Choose a category...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "This menu isn't yours — run the command yourself to browse it.",
-                ephemeral=True,
-            )
-            return
-
-        choice = self.values[0]
-        if choice == "__home__":
-            embed = self.view.home_embed
-        else:
-            embed = _build_category_embed(self.categories[choice], self.color, self.footer)
-        await interaction.response.edit_message(embed=embed)
-
-
-class HelpView(discord.ui.View):
-    def __init__(self, categories, home_embed, color, footer, author_id, timeout=120):
-        super().__init__(timeout=timeout)
-        self.home_embed = home_embed
-        self.message = None  # set by the caller right after sending
-        self.add_item(_CategorySelect(categories, color, footer, author_id))
-
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
-        if self.message is not None:
-            try:
-                await self.message.edit(view=self)
-            except discord.HTTPException:
-                pass
+@bot.command(name="vanitytime")
+async def vanitytime(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    embed = await build_vanitytime_embed(member)
+    await ctx.send(embed=embed)
 
 
 # ---------------------------------------------------------------------------
-# Setup — registers -help and -adminhelp on the given bot
+# Quest commands
 # ---------------------------------------------------------------------------
 
-def build_public_help(prefix: str, author_id: int):
-    """Build the (embed, view) pair for the public help menu. Shared by
-    both the -help prefix command and the /help slash command so they
-    always show identical content."""
-    footer = f"Prefix: {prefix}  or  @mention  •  Bot owner: {prefix}adminhelp"
-    embed = _build_home_embed(
-        title=f"{emoji.HELP_BOOK} J.A.R.V.I.S. Help",
-        description="Here's what I can do. Pick a category below to see the commands.",
-        categories=PUBLIC_CATEGORIES,
-        color=discord.Color.blurple(),
-        footer=footer,
-    )
-    view = HelpView(PUBLIC_CATEGORIES, embed, discord.Color.blurple(), footer, author_id)
-    return embed, view
+@bot.command(name="quest", aliases=["quests", "q"])
+async def quest_cmd(ctx, member: discord.Member = None):
+    """-quest / -quests / -q [@user] — shows today's quests (all of them)
+    and their progress/claim status."""
+    member = member or ctx.author
+    embed = await quests.status_embed(member)
+    await ctx.send(embed=embed)
 
 
-def setup_help(bot, owner_id: int):
+# ---------------------------------------------------------------------------
+# Slash commands (public-only — owner commands stay prefix-only since
+# Discord shows slash commands to every member regardless of permission
+# checks done inside the callback, which would just be confusing here).
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="quests", description="Show today's quests and their progress/claim status.")
+@app_commands.describe(member="Whose quests to show (defaults to you)")
+async def quests_slash(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    embed = await quests.status_embed(target)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="vanitytime", description="Show vanity time, lifetime total, and reward cycle progress.")
+@app_commands.describe(member="Whose vanity time to show (defaults to you)")
+async def vanitytime_slash(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    embed = await build_vanitytime_embed(target)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="help", description="List every command available to members.")
+async def help_slash(interaction: discord.Interaction):
     prefix = bot.command_prefix if isinstance(bot.command_prefix, str) else "-"
+    embed, view = help_menu.build_public_help(prefix, interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view)
+    view.message = await interaction.original_response()
 
-    @bot.command(name="help")
-    async def help_cmd(ctx):
-        """-help — lists every command available to members."""
-        embed, view = build_public_help(prefix, ctx.author.id)
-        view.message = await ctx.send(embed=embed, view=view)
 
-    @bot.command(name="adminhelp")
-    async def adminhelp_cmd(ctx):
-        """-adminhelp — owner-only. Lists owner config/testing commands."""
-        if ctx.author.id != owner_id:
-            await ctx.send(f"{emoji.DENIED} Only the bot owner can use this command.")
-            return
+_slash_synced = False
 
-        footer = f"Prefix: {prefix}  or  @mention  •  Bot owner only"
-        embed = _build_home_embed(
-            title=f"{emoji.HELP_TOOLS} Admin Commands",
-            description=(
-                "Owner-only config and testing utilities. These won't work "
-                "for anyone but the bot owner."
-            ),
-            categories=ADMIN_CATEGORIES,
-            color=discord.Color.red(),
-            footer=footer,
+
+@bot.listen("on_ready")
+async def sync_slash_commands_once():
+    """Sync /quests, /vanitytime, /help. Synced to the locked guild (see
+    -setguild) when one's configured, since guild-scoped syncs show up
+    instantly; a global sync can take up to an hour to propagate. Only
+    runs once per process — on_ready can fire again on reconnect and
+    re-syncing every time risks Discord's sync rate limit."""
+    global _slash_synced
+    if _slash_synced:
+        return
+    _slash_synced = True
+
+    guild_id = vanity.cfg_int("guild_id")
+    try:
+        if guild_id:
+            guild_obj = discord.Object(id=guild_id)
+            bot.tree.copy_global_to(guild=guild_obj)
+            await bot.tree.sync(guild=guild_obj)
+            print(f"Slash commands synced to guild {guild_id}.")
+        else:
+            await bot.tree.sync()
+            print("Slash commands synced globally (can take up to an hour to appear everywhere).")
+    except discord.HTTPException as e:
+        print(f"Slash command sync failed: {e}")
+
+
+@bot.command(name="setquestlogchannel")
+@is_owner()
+async def setquestlogchannel(ctx, channel: discord.TextChannel):
+    vanity.config["quest_log_channel_id"] = str(channel.id)
+    await db.set_config("quest_log_channel_id", channel.id)
+    await ctx.send(f"{emoji.SUCCESS} Quest completions/claims will now be logged in {channel.mention}.")
+
+
+@bot.command(name="questlogchannel")
+@is_owner()
+async def questlogchannel(ctx):
+    channel = bot.get_channel(vanity.cfg_int("quest_log_channel_id"))
+    await ctx.send(f"{emoji.QUEST_LIST} Current quest log channel: {channel.mention if channel else 'not set'}")
+
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+
+async def main():
+    await db.init_db()
+    await vanity.load_config_from_db()
+    await automod.load_config_from_db()
+
+    token = os.environ.get("DISCORD_TOKEN")
+    if not token:
+        raise RuntimeError(
+            "No bot token found. Set the DISCORD_TOKEN environment variable "
+            "on bot-hosting.net."
         )
-        view = HelpView(ADMIN_CATEGORIES, embed, discord.Color.red(), footer, ctx.author.id)
-        view.message = await ctx.send(embed=embed, view=view)
 
-    return help_cmd, adminhelp_cmd
+    try:
+        await bot.start(token)
+    finally:
+        await webhook.close_session()
+        await db.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
