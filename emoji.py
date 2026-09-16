@@ -48,6 +48,12 @@ QUEST_LIST = "<a:diamond_black:1547569545726926990>"   # -quest / quest log chan
 QUEST_TYPE = "🌸"   # "quest" field label in the claim log embed
 
 # ---------------------------------------------------------------------------
+# Image automod
+# ---------------------------------------------------------------------------
+TIMEOUT       = "🔇"   # a member was timed out for a banned image
+BANNED_IMAGE  = "🚫"   # -banimage / -listbannedimages headers
+
+# ---------------------------------------------------------------------------
 # Help menu (-help / -adminhelp)
 # ---------------------------------------------------------------------------
 HELP_BOOK        = "<a:diamond_black:1547569545726926990>"   # -help title
