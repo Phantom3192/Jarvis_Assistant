@@ -8,20 +8,33 @@ image attachments against the banned list; a match gets the message
 deleted and its author timed out for the duration set when that image
 was banned.
 
-Matching is EXACT content-hash only (SHA-256 of the raw file bytes) — a
-resave, recompression, resize, or crop of a banned image will NOT match.
-That trade-off was chosen deliberately to avoid extra dependencies and
-false positives; see db.py's banned_images table.
+Matching is PERCEPTUAL (a "phash" of what the image actually looks
+like, via Pillow + imagehash), not an exact byte hash. This was changed
+from an earlier exact-hash version after discovering Discord's own CDN
+doesn't always re-serve byte-identical copies of what looks like "the
+same" re-uploaded file (especially for GIFs/larger PNGs), which made
+exact hashing miss real repeat-offenses. Perceptual hashing compares a
+small "fingerprint" of the image's visual content, so resizes,
+recompressions, and Discord's own reprocessing don't cause a miss.
+
+Two images are considered a match if their phash Hamming distance is
+<= the configured threshold (default 5, tunable via
+-setautomodthreshold). Matching requires scanning every banned image's
+stored hash each time (cheap — a few microseconds per comparison — see
+_find_best_match), since a distance check can't be done as a plain SQL
+equality lookup the way an exact hash could.
 
 Wired up from main.py via setup(bot, owner_id), and check_message(bot,
 message) is called from on_message before other message processing.
 """
 import datetime
-import hashlib
+import io
 import re
 
 import discord
+import imagehash
 from discord.ext import commands
+from PIL import Image, UnidentifiedImageError
 
 import db
 import emoji
@@ -36,10 +49,16 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 # Discord's own hard cap on how long a timeout can last.
 MAX_TIMEOUT_SECONDS = 28 * 86400
 
-# In-memory cache of config (currently just the automod log channel),
+# Perceptual hash size (8 -> a 64-bit/16-hex-char fingerprint). Bigger
+# catches finer detail but is marginally more CPU per image — 8 is the
+# imagehash library's own default and is plenty for "is this the same
+# meme/image" style matching.
+PHASH_SIZE = 8
+
+# In-memory cache of config (automod log channel + match threshold),
 # loaded from the shared `config` table at startup — same pattern as
 # vanity.py's config dict.
-DEFAULT_CONFIG = {"automod_log_channel_id": "0"}
+DEFAULT_CONFIG = {"automod_log_channel_id": "0", "automod_phash_threshold": "5"}
 config = dict(DEFAULT_CONFIG)
 
 
@@ -86,7 +105,7 @@ def format_duration(seconds) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Attachment helpers
+# Attachment / perceptual-hash helpers
 # ---------------------------------------------------------------------------
 
 def _is_image_attachment(att: discord.Attachment) -> bool:
@@ -99,9 +118,53 @@ def _image_attachments(message: discord.Message) -> list[discord.Attachment]:
     return [a for a in message.attachments if _is_image_attachment(a)]
 
 
-async def _hash_attachment(att: discord.Attachment) -> str:
-    data = await att.read()
-    return hashlib.sha256(data).hexdigest()
+async def _phash_attachment(att: discord.Attachment) -> imagehash.ImageHash | None:
+    """Downloads an attachment and computes its perceptual hash. Returns
+    None (and lets the caller log why) if it can't be downloaded or
+    isn't a decodable image, rather than raising — a single bad
+    attachment shouldn't block scanning the rest of a message."""
+    try:
+        data = await att.read()
+    except discord.HTTPException as e:
+        _log(f"couldn't download attachment {att.filename!r}: {e}")
+        return None
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            return imagehash.phash(img, hash_size=PHASH_SIZE)
+    except (UnidentifiedImageError, OSError) as e:
+        _log(f"couldn't decode attachment {att.filename!r} as an image: {e}")
+        return None
+
+
+def _hash_to_str(h: imagehash.ImageHash) -> str:
+    return str(h)
+
+
+def _str_to_hash(s: str) -> imagehash.ImageHash | None:
+    try:
+        return imagehash.hex_to_hash(s)
+    except (ValueError, TypeError):
+        return None
+
+
+async def _find_best_match(phash: imagehash.ImageHash, threshold: int) -> tuple[dict, int] | None:
+    """Scans every banned image and returns (entry, distance) for the
+    closest one within `threshold`, or None if nothing's close enough.
+    A full scan per check is intentional — banned-image lists for a
+    single-server moderation bot are expected to stay small (tens to
+    low hundreds), so this stays well under a millisecond of CPU even
+    checked against every entry."""
+    banned = await db.get_all_banned_images()
+    best = None
+    for entry in banned:
+        stored = _str_to_hash(entry["hash"])
+        if stored is None:
+            continue
+        distance = phash - stored
+        if distance <= threshold and (best is None or distance < best[1]):
+            best = (entry, distance)
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -114,15 +177,14 @@ def _log(msg: str) -> None:
 
 async def check_message(bot, message: discord.Message) -> bool:
     """Checks an incoming message's image attachments against the banned
-    list. If one matches: deletes the message and times out the author.
-    Returns True if action was taken, so main.py can skip further
-    processing (quest tracking, command parsing) on this message.
+    list (perceptual-hash match within the configured threshold). If one
+    matches: deletes the message and times out the author. Returns True
+    if action was taken, so main.py can skip further processing (quest
+    tracking, command parsing) on this message.
 
-    Every branch below logs to console (prefixed [automod]) so a "nothing
-    happened" report can be diagnosed from the bot's console output
-    instead of guessing — this event either never fired, found no image,
-    found no hash match, or hit a permissions problem, and now each of
-    those prints something different."""
+    Every branch below logs to console (prefixed [automod]) so a
+    "nothing happened" report can be diagnosed from the bot's console
+    output instead of guessing."""
     if message.guild is None or message.author.bot:
         return False
 
@@ -133,28 +195,29 @@ async def check_message(bot, message: discord.Message) -> bool:
     _log(f"scanning {len(images)} image attachment(s) from {message.author} "
          f"in #{message.channel} ({message.guild.name})")
 
+    threshold = cfg_int("automod_phash_threshold") or int(DEFAULT_CONFIG["automod_phash_threshold"])
+
     for att in images:
-        try:
-            file_hash = await _hash_attachment(att)
-        except discord.HTTPException as e:
-            _log(f"couldn't download attachment {att.filename!r} to hash it: {e}")
+        phash = await _phash_attachment(att)
+        if phash is None:
             continue
 
-        _log(f"attachment {att.filename!r} hash: {file_hash[:16]}...")
+        _log(f"attachment {att.filename!r} phash: {_hash_to_str(phash)}")
 
-        banned = await db.get_banned_image(file_hash)
-        if banned is None:
-            _log("no match in banned_images — not acting")
+        match = await _find_best_match(phash, threshold)
+        if match is None:
+            _log(f"no match within threshold {threshold} — not acting")
             continue
 
-        _log(f"MATCH — banned image {file_hash[:16]}..., taking action")
-        await _take_action(bot, message, banned)
+        banned, distance = match
+        _log(f"MATCH — banned image {banned['hash']} (distance {distance}/{threshold}), taking action")
+        await _take_action(bot, message, banned, distance)
         return True
 
     return False
 
 
-async def _take_action(bot, message: discord.Message, banned: dict) -> None:
+async def _take_action(bot, message: discord.Message, banned: dict, distance: int) -> None:
     member = message.author
     timeout_seconds = min(banned["timeout_seconds"], MAX_TIMEOUT_SECONDS)
 
@@ -217,10 +280,10 @@ async def _take_action(bot, message: discord.Message, banned: dict) -> None:
     except discord.HTTPException as e:
         _log(f"couldn't send the in-channel notice either: {e}")
 
-    await _send_log_embed(bot, member, message, banned, timeout_seconds, delete_ok, timeout_ok)
+    await _send_log_embed(bot, member, message, banned, distance, timeout_seconds, delete_ok, timeout_ok)
 
 
-async def _send_log_embed(bot, member, message, banned, timeout_seconds, delete_ok, timeout_ok):
+async def _send_log_embed(bot, member, message, banned, distance, timeout_seconds, delete_ok, timeout_ok):
     channel_id = cfg_int("automod_log_channel_id")
     if not channel_id:
         return
@@ -235,7 +298,7 @@ async def _send_log_embed(bot, member, message, banned, timeout_seconds, delete_
     embed.add_field(name=f"{emoji.USER} User", value=f"{member.mention} (`{member}`)", inline=False)
     embed.add_field(name="Channel", value=message.channel.mention, inline=True)
     embed.add_field(name=f"{emoji.TIMEOUT} Timeout", value=format_duration(timeout_seconds), inline=True)
-    embed.add_field(name="Image Hash", value=f"`{banned['hash'][:16]}...`", inline=True)
+    embed.add_field(name="Match", value=f"`{banned['hash']}` (dist {distance})", inline=True)
     if not delete_ok:
         embed.add_field(name=f"{emoji.WARNING} Delete failed", value="Missing permissions", inline=False)
     if not timeout_ok:
@@ -275,9 +338,10 @@ def setup(bot, owner_id: int):
     @is_owner()
     async def banimage(ctx, *, duration: str = None):
         """-banimage <duration> — owner-only. Reply to a message containing
-        an image with this command to ban that exact image. Any future
-        message containing it gets deleted and its sender timed out for
-        <duration> (e.g. 10m, 1h, 2d, 1h30m). Max 28 days (Discord's cap)."""
+        an image with this command to ban it (and any close visual match —
+        resizes/recompressions included). Any future message containing a
+        match gets deleted and its sender timed out for <duration> (e.g.
+        10m, 1h, 2d, 1h30m). Max 28 days (Discord's cap)."""
         replied = await _get_replied_message(ctx)
         if replied is None:
             await ctx.send(
@@ -301,17 +365,27 @@ def setup(bot, owner_id: int):
         seconds = min(seconds, MAX_TIMEOUT_SECONDS)
 
         att = images[0]
-        try:
-            file_hash = await _hash_attachment(att)
-        except discord.HTTPException:
-            await ctx.send(f"{emoji.ERROR} Couldn't download that image to hash it — try again.")
+        phash = await _phash_attachment(att)
+        if phash is None:
+            await ctx.send(f"{emoji.ERROR} Couldn't read that as an image — try again.")
             return
 
-        await db.add_banned_image(file_hash, seconds, ctx.author.id, filename=att.filename)
+        threshold = cfg_int("automod_phash_threshold") or int(DEFAULT_CONFIG["automod_phash_threshold"])
+        existing = await _find_best_match(phash, threshold)
+        if existing is not None:
+            entry, distance = existing
+            await ctx.send(
+                f"{emoji.WARNING} A very similar image is already banned "
+                f"(`{entry['hash']}`, distance {distance}) — not adding a duplicate."
+            )
+            return
+
+        phash_str = _hash_to_str(phash)
+        await db.add_banned_image(phash_str, seconds, ctx.author.id, filename=att.filename)
         await ctx.send(
-            f"{emoji.SUCCESS} Banned that image. Anyone who sends it now gets timed out for "
-            f"**{format_duration(seconds)}** and the message deleted.\n"
-            f"Hash: `{file_hash[:16]}...`"
+            f"{emoji.SUCCESS} Banned that image. Anyone who sends it (or a close visual match) now "
+            f"gets timed out for **{format_duration(seconds)}** and the message deleted.\n"
+            f"Hash: `{phash_str}`"
         )
 
     @bot.command(name="unbanimage")
@@ -328,7 +402,7 @@ def setup(bot, owner_id: int):
                     f"check `-listbannedimages` for the exact prefix."
                 )
                 return
-            await ctx.send(f"{emoji.DELETE} Un-banned image `{removed[:16]}...`.")
+            await ctx.send(f"{emoji.DELETE} Un-banned image `{removed}`.")
             return
 
         replied = await _get_replied_message(ctx)
@@ -344,17 +418,20 @@ def setup(bot, owner_id: int):
             await ctx.send(f"{emoji.WARNING} That message doesn't have an image attachment.")
             return
 
-        try:
-            file_hash = await _hash_attachment(images[0])
-        except discord.HTTPException:
-            await ctx.send(f"{emoji.ERROR} Couldn't download that image to hash it — try again.")
+        phash = await _phash_attachment(images[0])
+        if phash is None:
+            await ctx.send(f"{emoji.ERROR} Couldn't read that as an image — try again.")
             return
 
-        removed = await db.remove_banned_image(file_hash)
-        if removed:
-            await ctx.send(f"{emoji.DELETE} Un-banned that image.")
-        else:
+        threshold = cfg_int("automod_phash_threshold") or int(DEFAULT_CONFIG["automod_phash_threshold"])
+        match = await _find_best_match(phash, threshold)
+        if match is None:
             await ctx.send(f"{emoji.WARNING} That image isn't currently banned.")
+            return
+
+        entry, _ = match
+        await db.remove_banned_image(entry["hash"])
+        await ctx.send(f"{emoji.DELETE} Un-banned that image (`{entry['hash']}`).")
 
     @bot.command(name="listbannedimages", aliases=["bannedimages"])
     @is_owner()
@@ -375,7 +452,7 @@ def setup(bot, owner_id: int):
             adder = f"<@{entry['added_by']}>"
             name = entry["filename"] or "(unnamed)"
             embed.add_field(
-                name=f"`{entry['hash'][:16]}...`",
+                name=f"`{entry['hash']}`",
                 value=(
                     f"File: {name}\n"
                     f"Timeout: {format_duration(entry['timeout_seconds'])}\n"
@@ -411,4 +488,33 @@ def setup(bot, owner_id: int):
                 f"Use `-setautomodlogchannel #channel` to set one."
             )
 
-    return banimage, unbanimage, listbannedimages, setautomodlogchannel, automodlogchannel
+    @bot.command(name="setautomodthreshold")
+    @is_owner()
+    async def setautomodthreshold(ctx, value: int):
+        """-setautomodthreshold <0-64> — owner-only. How visually close an
+        image needs to be to a banned one to count as a match (perceptual
+        hash Hamming distance). Lower = stricter/fewer false positives,
+        higher = catches more edits/recolors but risks false positives.
+        Default 5 (roughly 8% of the fingerprint)."""
+        if not 0 <= value <= PHASH_SIZE * PHASH_SIZE:
+            await ctx.send(f"{emoji.WARNING} Must be between 0 and {PHASH_SIZE * PHASH_SIZE}.")
+            return
+        config["automod_phash_threshold"] = str(value)
+        await db.set_config("automod_phash_threshold", value)
+        await ctx.send(f"{emoji.SUCCESS} Automod match threshold set to {value}.")
+
+    @bot.command(name="automodthreshold")
+    @is_owner()
+    async def automodthreshold(ctx):
+        """-automodthreshold — owner-only. Shows the current match
+        threshold."""
+        await ctx.send(
+            f"{emoji.BANNED_IMAGE} Current match threshold: "
+            f"{cfg_int('automod_phash_threshold') or DEFAULT_CONFIG['automod_phash_threshold']}"
+        )
+
+    return (
+        banimage, unbanimage, listbannedimages,
+        setautomodlogchannel, automodlogchannel,
+        setautomodthreshold, automodthreshold,
+    )
