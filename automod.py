@@ -108,11 +108,21 @@ async def _hash_attachment(att: discord.Attachment) -> str:
 # Message scanning — called from on_message in main.py
 # ---------------------------------------------------------------------------
 
+def _log(msg: str) -> None:
+    print(f"[automod] {msg}")
+
+
 async def check_message(bot, message: discord.Message) -> bool:
     """Checks an incoming message's image attachments against the banned
     list. If one matches: deletes the message and times out the author.
     Returns True if action was taken, so main.py can skip further
-    processing (quest tracking, command parsing) on this message."""
+    processing (quest tracking, command parsing) on this message.
+
+    Every branch below logs to console (prefixed [automod]) so a "nothing
+    happened" report can be diagnosed from the bot's console output
+    instead of guessing — this event either never fired, found no image,
+    found no hash match, or hit a permissions problem, and now each of
+    those prints something different."""
     if message.guild is None or message.author.bot:
         return False
 
@@ -120,16 +130,24 @@ async def check_message(bot, message: discord.Message) -> bool:
     if not images:
         return False
 
+    _log(f"scanning {len(images)} image attachment(s) from {message.author} "
+         f"in #{message.channel} ({message.guild.name})")
+
     for att in images:
         try:
             file_hash = await _hash_attachment(att)
-        except discord.HTTPException:
+        except discord.HTTPException as e:
+            _log(f"couldn't download attachment {att.filename!r} to hash it: {e}")
             continue
+
+        _log(f"attachment {att.filename!r} hash: {file_hash[:16]}...")
 
         banned = await db.get_banned_image(file_hash)
         if banned is None:
+            _log("no match in banned_images — not acting")
             continue
 
+        _log(f"MATCH — banned image {file_hash[:16]}..., taking action")
         await _take_action(bot, message, banned)
         return True
 
@@ -143,22 +161,46 @@ async def _take_action(bot, message: discord.Message, banned: dict) -> None:
     # Don't touch anyone with moderation permissions — most likely
     # testing or re-posting for moderation reasons, and the bot may not
     # have a high enough role to time them out anyway.
-    perms = message.channel.permissions_for(member)
-    if perms.administrator or perms.moderate_members:
+    author_perms = message.channel.permissions_for(member)
+    if author_perms.administrator or author_perms.moderate_members:
+        _log(f"{member} has admin/moderate_members in this channel — exempted, not acting")
         return
+
+    # Check the BOT's own permissions up front and log exactly what's
+    # missing, rather than letting delete()/timeout()/send() fail
+    # silently later. A channel-specific permission overwrite (e.g. no
+    # View Channel or Manage Messages just in this one channel) is the
+    # single most common reason this looks like it "does nothing."
+    me = message.guild.me
+    bot_perms = message.channel.permissions_for(me)
+    missing = []
+    if not bot_perms.view_channel:
+        missing.append("View Channel")
+    if not bot_perms.manage_messages:
+        missing.append("Manage Messages")
+    if not bot_perms.send_messages:
+        missing.append("Send Messages")
+    if not me.guild_permissions.moderate_members:
+        missing.append("Timeout Members (guild-wide)")
+    if missing:
+        _log(f"MISSING PERMISSIONS in #{message.channel}: {', '.join(missing)}")
 
     delete_ok = True
     try:
         await message.delete()
-    except discord.HTTPException:
+        _log(f"deleted message {message.id}")
+    except discord.HTTPException as e:
         delete_ok = False
+        _log(f"delete FAILED: {e}")
 
     timeout_ok = True
     try:
         until = discord.utils.utcnow() + datetime.timedelta(seconds=timeout_seconds)
         await member.timeout(until, reason="Sent a banned image (image automod)")
-    except discord.HTTPException:
+        _log(f"timed out {member} for {format_duration(timeout_seconds)}")
+    except discord.HTTPException as e:
         timeout_ok = False
+        _log(f"timeout FAILED: {e}")
 
     notice = (
         f"{emoji.TIMEOUT} {member.mention}'s image was removed (banned image) "
@@ -172,8 +214,8 @@ async def _take_action(bot, message: discord.Message, banned: dict) -> None:
     try:
         warn_msg = await message.channel.send(notice)
         await warn_msg.delete(delay=15)
-    except discord.HTTPException:
-        pass
+    except discord.HTTPException as e:
+        _log(f"couldn't send the in-channel notice either: {e}")
 
     await _send_log_embed(bot, member, message, banned, timeout_seconds, delete_ok, timeout_ok)
 
@@ -354,4 +396,19 @@ def setup(bot, owner_id: int):
         await db.set_config("automod_log_channel_id", channel.id)
         await ctx.send(f"{emoji.SUCCESS} Automod log channel set to {channel.mention}")
 
-    return banimage, unbanimage, listbannedimages, setautomodlogchannel
+    @bot.command(name="automodlogchannel")
+    @is_owner()
+    async def automodlogchannel(ctx):
+        """-automodlogchannel — owner-only. Shows the currently configured
+        automod log channel (or that none is set)."""
+        channel_id = cfg_int("automod_log_channel_id")
+        channel = bot.get_channel(channel_id) if channel_id else None
+        if channel:
+            await ctx.send(f"{emoji.BANNED_IMAGE} Current automod log channel: {channel.mention}")
+        else:
+            await ctx.send(
+                f"{emoji.BANNED_IMAGE} No automod log channel set yet. "
+                f"Use `-setautomodlogchannel #channel` to set one."
+            )
+
+    return banimage, unbanimage, listbannedimages, setautomodlogchannel, automodlogchannel
