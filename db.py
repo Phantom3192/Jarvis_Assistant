@@ -110,6 +110,17 @@ async def init_db():
         )
         """
     )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS banned_images (
+            hash            TEXT PRIMARY KEY,
+            timeout_seconds INTEGER NOT NULL,
+            added_by        TEXT NOT NULL,
+            added_at        REAL NOT NULL,
+            filename        TEXT
+        )
+        """
+    )
 
     # Migrations: vanity_data existed before these columns were added.
     # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
@@ -399,6 +410,83 @@ async def set_last_box_drop(user_id: int, timestamp: float) -> None:
         "ON CONFLICT(user_id) DO UPDATE SET last_drop = excluded.last_drop",
         [str(user_id), timestamp],
     )
+
+
+# ---------------------------------------------------------------------------
+# Banned images (image automod — exact content-hash match)
+# ---------------------------------------------------------------------------
+
+async def add_banned_image(file_hash: str, timeout_seconds: int, added_by: int, filename: str = None) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO banned_images (hash, timeout_seconds, added_by, added_at, filename) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(hash) DO UPDATE SET "
+        "timeout_seconds = excluded.timeout_seconds, "
+        "added_by = excluded.added_by, "
+        "added_at = excluded.added_at, "
+        "filename = excluded.filename",
+        [file_hash, timeout_seconds, str(added_by), time.time(), filename],
+    )
+
+
+async def get_banned_image(file_hash: str) -> dict | None:
+    client = get_client()
+    rs = await client.execute(
+        "SELECT hash, timeout_seconds, added_by, added_at, filename FROM banned_images WHERE hash = ?",
+        [file_hash],
+    )
+    if not rs.rows:
+        return None
+    row = rs.rows[0]
+    return {
+        "hash": row[0],
+        "timeout_seconds": row[1],
+        "added_by": row[2],
+        "added_at": row[3],
+        "filename": row[4],
+    }
+
+
+async def remove_banned_image(file_hash: str) -> bool:
+    """Removes an exact-hash match. Returns whether a row was deleted."""
+    client = get_client()
+    rs = await client.execute("SELECT 1 FROM banned_images WHERE hash = ?", [file_hash])
+    if not rs.rows:
+        return False
+    await client.execute("DELETE FROM banned_images WHERE hash = ?", [file_hash])
+    return True
+
+
+async def remove_banned_image_by_prefix(prefix: str) -> str | None:
+    """Removes a banned image identified by a prefix of its hash (as shown
+    in -listbannedimages). Returns the full hash removed, or None if zero
+    or more than one row matched (ambiguous prefixes are refused)."""
+    client = get_client()
+    rs = await client.execute("SELECT hash FROM banned_images WHERE hash LIKE ?", [f"{prefix}%"])
+    if len(rs.rows) != 1:
+        return None
+    full_hash = rs.rows[0][0]
+    await client.execute("DELETE FROM banned_images WHERE hash = ?", [full_hash])
+    return full_hash
+
+
+async def get_all_banned_images() -> list[dict]:
+    client = get_client()
+    rs = await client.execute(
+        "SELECT hash, timeout_seconds, added_by, added_at, filename FROM banned_images "
+        "ORDER BY added_at DESC"
+    )
+    return [
+        {
+            "hash": row[0],
+            "timeout_seconds": row[1],
+            "added_by": row[2],
+            "added_at": row[3],
+            "filename": row[4],
+        }
+        for row in rs.rows
+    ]
 
 
 async def close():
