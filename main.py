@@ -12,6 +12,7 @@ import quests
 import boxes
 import help_menu
 import emoji
+import automod
 
 intents = discord.Intents.default()
 intents.members = True
@@ -37,6 +38,10 @@ OWNER_ID = 1049677357927125012
 # Registers -help (all members) and -adminhelp (owner only) — embed +
 # dropdown category browser, see help_menu.py.
 help_menu.setup_help(bot, OWNER_ID)
+
+# Registers -banimage / -unbanimage / -listbannedimages /
+# -setautomodlogchannel (owner only) — see automod.py.
+automod.setup(bot, OWNER_ID)
 
 
 def is_owner():
@@ -99,6 +104,12 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
 
 @bot.event
 async def on_message(message: discord.Message):
+    # Image automod — see automod.py. If this message contained a banned
+    # image, it's already been deleted and the author timed out, so skip
+    # quest tracking / box drops / command parsing on it entirely.
+    if await automod.check_message(bot, message):
+        return
+
     # Quest progress tracking (message count + bump detection) — see
     # quests.py — and random box drops — see boxes.py. Neither blocks
     # normal command handling below.
@@ -392,6 +403,7 @@ async def questlogchannel(ctx):
 async def main():
     await db.init_db()
     await vanity.load_config_from_db()
+    await automod.load_config_from_db()
 
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
