@@ -118,6 +118,8 @@ ADMIN_CATEGORIES = [
              "and who banned it. Alias: -bannedimages."),
             ("-setautomodlogchannel #channel",
              "Set the channel where banned-image catches are logged."),
+            ("-automodlogchannel",
+             "View the current automod log channel."),
         ],
     },
 ]
