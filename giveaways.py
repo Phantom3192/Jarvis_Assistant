@@ -75,8 +75,17 @@ async def load_config_from_db():
 
 def _extract_prize_and_winners(embed: discord.Embed) -> tuple[int, list[int]] | None:
     """Returns (amount_per_winner, [winner_id, ...]) if this embed is a
-    plain-JC giveaway result, else None."""
-    text = embed.description or ""
+    plain-JC giveaway result, else None. Checks the description, the
+    title, and every field's name/value — Giveaway Boat's exact layout
+    can vary (e.g. the prize sometimes only appears in the title), so
+    every piece of text on the embed is searched rather than assuming
+    it's always in one specific spot."""
+    parts = [embed.description or "", embed.title or ""]
+    for field in embed.fields:
+        parts.append(field.name or "")
+        parts.append(field.value or "")
+    text = "\n".join(parts)
+
     prize_match = _JC_PRIZE_RE.search(text)
     if not prize_match:
         return None
@@ -96,7 +105,7 @@ async def check_message(bot, message: discord.Message) -> bool:
     """Called from on_message for every message. Returns True if this was
     a Giveaway Boat result it handled (caller can use that to skip other
     processing, same convention as automod.check_message)."""
-    if message.guild is None or not message.embeds:
+    if message.guild is None:
         return False
 
     bot_id = cfg_int("giveaway_bot_id")
@@ -105,10 +114,23 @@ async def check_message(bot, message: discord.Message) -> bool:
 
     channel_id = cfg_int("giveaway_channel_id")
     if channel_id and message.channel.id != channel_id:
+        print(f"[giveaways] message from giveaway bot ignored — #{message.channel} isn't the configured giveaway channel.")
         return False
 
-    parsed = _extract_prize_and_winners(message.embeds[0])
+    if not message.embeds:
+        print(f"[giveaways] message from giveaway bot in #{message.channel} has no embeds — skipping. content={message.content!r}")
+        return False
+
+    embed = message.embeds[0]
+    print(
+        f"[giveaways] message from configured giveaway bot in #{message.channel}: "
+        f"title={embed.title!r} description={embed.description!r} "
+        f"fields={[(f.name, f.value) for f in embed.fields]!r}"
+    )
+
+    parsed = _extract_prize_and_winners(embed)
     if parsed is None:
+        print("[giveaways] no JC-prize amount and/or winner mention found in that embed — skipping.")
         return False  # not a JC prize (or not a result embed) — leave it alone
 
     if await db.is_giveaway_processed(message.id):
