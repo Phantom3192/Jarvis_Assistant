@@ -13,6 +13,7 @@ import boxes
 import help_menu
 import emoji
 import automod
+import tickets
 
 intents = discord.Intents.default()
 intents.members = True
@@ -42,6 +43,10 @@ help_menu.setup_help(bot, OWNER_ID)
 # Registers -banimage / -unbanimage / -listbannedimages /
 # -setautomodlogchannel (owner only) — see automod.py.
 automod.setup(bot, OWNER_ID)
+
+# Registers -setticketstaffrole / -ticketclaimconfig (owner only) and
+# /claimticket, /unclaimticket (staff/admin) — see tickets.py.
+tickets.setup(bot, OWNER_ID)
 
 
 def is_owner():
@@ -404,6 +409,7 @@ async def main():
     await db.init_db()
     await vanity.load_config_from_db()
     await automod.load_config_from_db()
+    await tickets.load_config_from_db()
 
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
