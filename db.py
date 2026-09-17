@@ -121,6 +121,15 @@ async def init_db():
         )
         """
     )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS claimed_tickets (
+            channel_id  TEXT PRIMARY KEY,
+            claimed_by  TEXT NOT NULL,
+            claimed_at  REAL NOT NULL
+        )
+        """
+    )
 
     # Migrations: vanity_data existed before these columns were added.
     # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
@@ -487,6 +496,44 @@ async def get_all_banned_images() -> list[dict]:
         }
         for row in rs.rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Ticket claims (/claimticket, /unclaimticket)
+# ---------------------------------------------------------------------------
+
+async def claim_ticket(channel_id: int, claimed_by: int) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO claimed_tickets (channel_id, claimed_by, claimed_at) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(channel_id) DO UPDATE SET "
+        "claimed_by = excluded.claimed_by, "
+        "claimed_at = excluded.claimed_at",
+        [str(channel_id), str(claimed_by), time.time()],
+    )
+
+
+async def get_ticket_claim(channel_id: int) -> dict | None:
+    client = get_client()
+    rs = await client.execute(
+        "SELECT claimed_by, claimed_at FROM claimed_tickets WHERE channel_id = ?",
+        [str(channel_id)],
+    )
+    if not rs.rows:
+        return None
+    row = rs.rows[0]
+    return {"claimed_by": int(row[0]), "claimed_at": row[1]}
+
+
+async def unclaim_ticket(channel_id: int) -> bool:
+    """Returns whether a claim existed and was removed."""
+    client = get_client()
+    rs = await client.execute("SELECT 1 FROM claimed_tickets WHERE channel_id = ?", [str(channel_id)])
+    if not rs.rows:
+        return False
+    await client.execute("DELETE FROM claimed_tickets WHERE channel_id = ?", [str(channel_id)])
+    return True
 
 
 async def close():
