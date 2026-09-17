@@ -130,19 +130,22 @@ def setup(bot, owner_id: int):
             return
 
         try:
-            # Deny the whole staff role from sending in this channel...
+            # Only touch the send_messages field of whatever overwrite the
+            # role already has (view access, etc. — usually set by Ticket
+            # Tool — is left exactly as-is) rather than replacing the
+            # whole overwrite, which would wipe those other permissions.
+            role_ow = channel.overwrites_for(role)
+            role_ow.send_messages = False
             await channel.set_permissions(
-                role,
-                send_messages=False,
-                reason=f"Ticket claimed by {member} ({member.id})",
+                role, overwrite=role_ow, reason=f"Ticket claimed by {member} ({member.id})"
             )
-            # ...then explicitly re-allow just the claimer, which overrides
-            # the role-level deny above since member overwrites win.
+            # Explicitly re-allow just the claimer's send_messages (member
+            # overwrites win over role overwrites), on top of whatever
+            # overwrite they may already have — nothing else is touched.
+            member_ow = channel.overwrites_for(member)
+            member_ow.send_messages = True
             await channel.set_permissions(
-                member,
-                send_messages=True,
-                view_channel=True,
-                reason=f"Ticket claimed by {member} ({member.id})",
+                member, overwrite=member_ow, reason=f"Ticket claimed by {member} ({member.id})"
             )
         except discord.Forbidden:
             await interaction.response.send_message(
@@ -185,15 +188,27 @@ def setup(bot, owner_id: int):
         role = _staff_role(interaction.guild)
         try:
             if role is not None:
-                # Remove the role-level deny entirely (back to inheriting
-                # whatever the category/channel normally grants) rather
-                # than flipping it to an explicit allow, so it stays in
-                # sync with however the staff role's access is set up
-                # elsewhere.
-                await channel.set_permissions(role, overwrite=None, reason=f"Ticket unclaimed by {member}")
+                # Clear only the send_messages field we set on claim,
+                # leaving any other permissions (view access, etc.) on
+                # this overwrite exactly as they already were. If that
+                # leaves the overwrite with nothing set at all, drop it
+                # entirely so it doesn't linger as an empty entry.
+                role_ow = channel.overwrites_for(role)
+                role_ow.send_messages = None
+                await channel.set_permissions(
+                    role,
+                    overwrite=None if role_ow.is_empty() else role_ow,
+                    reason=f"Ticket unclaimed by {member}",
+                )
             claimer = interaction.guild.get_member(existing["claimed_by"])
             if claimer is not None:
-                await channel.set_permissions(claimer, overwrite=None, reason=f"Ticket unclaimed by {member}")
+                claimer_ow = channel.overwrites_for(claimer)
+                claimer_ow.send_messages = None
+                await channel.set_permissions(
+                    claimer,
+                    overwrite=None if claimer_ow.is_empty() else claimer_ow,
+                    reason=f"Ticket unclaimed by {member}",
+                )
         except discord.Forbidden:
             await interaction.response.send_message(
                 f"{emoji.ERROR} I don't have permission to edit this channel's permissions.",
