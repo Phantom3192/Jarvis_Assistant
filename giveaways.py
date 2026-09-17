@@ -108,6 +108,23 @@ async def check_message(bot, message: discord.Message) -> bool:
     if message.guild is None:
         return False
 
+    # Diagnostic net: giveaway result messages can arrive under a
+    # DIFFERENT author id than the bot's main account (e.g. sent via a
+    # webhook or an interaction follow-up) even though they look
+    # identical in Discord. This logs the real author id/name for
+    # anything that looks like a giveaway result, regardless of the
+    # configured bot id, so a mismatch is visible instead of silently
+    # doing nothing.
+    haystack = (message.content or "") + "\n" + "\n".join(
+        (e.description or "") + "\n" + (e.title or "") for e in message.embeds
+    )
+    if message.author.bot and re.search(r"won the giveaway|giveaway ended", haystack, re.IGNORECASE):
+        print(
+            f"[giveaways] giveaway-shaped message seen — author.id={message.author.id} "
+            f"author.name={message.author!r} webhook_id={message.webhook_id} "
+            f"configured_bot_id={cfg_int('giveaway_bot_id')} (match={message.author.id == cfg_int('giveaway_bot_id')})"
+        )
+
     bot_id = cfg_int("giveaway_bot_id")
     if not bot_id or message.author.id != bot_id:
         return False
