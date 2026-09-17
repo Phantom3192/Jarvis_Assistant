@@ -115,7 +115,19 @@ def _is_image_attachment(att: discord.Attachment) -> bool:
 
 
 def _image_attachments(message: discord.Message) -> list[discord.Attachment]:
-    return [a for a in message.attachments if _is_image_attachment(a)]
+    """Collects image attachments from the message itself AND, if it's a
+    forwarded message, from the forwarded snapshot(s).
+
+    Discord's "forward" feature doesn't copy the original message's
+    attachments onto message.attachments — they only show up under
+    message.message_snapshots[i].attachments (discord.py's
+    MessageSnapshot). Without this, a forwarded copy of a banned image
+    sailed straight past automod since message.attachments was always
+    empty for it."""
+    atts = list(message.attachments)
+    for snapshot in getattr(message, "message_snapshots", None) or []:
+        atts.extend(snapshot.attachments)
+    return [a for a in atts if _is_image_attachment(a)]
 
 
 async def _phash_attachment(att: discord.Attachment) -> imagehash.ImageHash | None:
