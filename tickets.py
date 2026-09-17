@@ -155,7 +155,7 @@ def setup(bot, owner_id: int):
         await db.claim_ticket(channel.id, member.id)
 
         embed = discord.Embed(
-            description=f"{emoji.LOCKED} Ticket claimed by {member.mention} — other {role.mention} members can no longer send messages here.",
+            description=f"{emoji.LOCKED} Ticket claimed by {member.mention}.",
             color=discord.Color.green(),
         )
         await interaction.response.send_message(embed=embed)
@@ -204,7 +204,7 @@ def setup(bot, owner_id: int):
         await db.unclaim_ticket(channel.id)
 
         embed = discord.Embed(
-            description=f"{emoji.SUCCESS} Ticket unclaimed by {member.mention} — {role.mention if role else 'staff'} can send messages here again.",
+            description=f"{emoji.SUCCESS} Ticket unclaimed by {member.mention}.",
             color=discord.Color.blurple(),
         )
         await interaction.response.send_message(embed=embed)
