@@ -73,19 +73,34 @@ async def load_config_from_db():
             config[key] = stored[key]
 
 
-def _extract_prize_and_winners(embed: discord.Embed) -> tuple[int, list[int]] | None:
-    """Returns (amount_per_winner, [winner_id, ...]) if this embed is a
-    plain-JC giveaway result, else None. Checks the description, the
-    title, and every field's name/value — Giveaway Boat's exact layout
-    can vary (e.g. the prize sometimes only appears in the title), so
-    every piece of text on the embed is searched rather than assuming
-    it's always in one specific spot."""
-    parts = [embed.description or "", embed.title or ""]
-    for field in embed.fields:
-        parts.append(field.name or "")
-        parts.append(field.value or "")
-    text = "\n".join(parts)
+def _collect_component_text(components) -> list[str]:
+    """Recursively pulls text out of a Components V2 layout (Container /
+    Section / ActionRow nest their contents in `.children`; the actual
+    text lives on `TextDisplay.content`). Giveaway Boat's "GIVEAWAY
+    ENDED" / "Congratulations!" result messages are sent this way, not
+    as legacy embeds — a CV2 message has `flags.IsComponentsV2` set,
+    which means Discord disables `content` and `embeds` on it entirely,
+    so `message.embeds` and `message.content` are both empty even
+    though the message clearly has text when you look at it."""
+    texts = []
+    for c in components or []:
+        content = getattr(c, "content", None)
+        if isinstance(content, str):
+            texts.append(content)
+        children = getattr(c, "children", None)
+        if children:
+            texts.extend(_collect_component_text(children))
+        accessory = getattr(c, "accessory", None)
+        if accessory is not None:
+            texts.extend(_collect_component_text([accessory]))
+    return texts
 
+
+def _extract_prize_and_winners(text: str) -> tuple[int, list[int]] | None:
+    """Returns (amount_per_winner, [winner_id, ...]) if this text (built
+    from an embed's description/title/fields and/or a Components V2
+    layout's TextDisplay content — Giveaway Boat's exact layout and
+    message type can vary) is a plain-JC giveaway result, else None."""
     prize_match = _JC_PRIZE_RE.search(text)
     if not prize_match:
         return None
@@ -117,7 +132,7 @@ async def check_message(bot, message: discord.Message) -> bool:
     # doing nothing.
     haystack = (message.content or "") + "\n" + "\n".join(
         (e.description or "") + "\n" + (e.title or "") for e in message.embeds
-    )
+    ) + "\n" + "\n".join(_collect_component_text(message.components))
     if message.author.bot and re.search(r"won the giveaway|giveaway ended", haystack, re.IGNORECASE):
         print(
             f"[giveaways] giveaway-shaped message seen — author.id={message.author.id} "
@@ -134,21 +149,34 @@ async def check_message(bot, message: discord.Message) -> bool:
         print(f"[giveaways] message from giveaway bot ignored — #{message.channel} isn't the configured giveaway channel.")
         return False
 
-    if not message.embeds:
-        print(f"[giveaways] message from giveaway bot in #{message.channel} has no embeds — skipping. content={message.content!r}")
+    component_texts = _collect_component_text(message.components)
+    if not message.embeds and not component_texts:
+        print(
+            f"[giveaways] message from giveaway bot in #{message.channel} has no embeds "
+            f"and no components — skipping. content={message.content!r}"
+        )
         return False
 
-    embed = message.embeds[0]
+    parts = [message.content or ""]
+    for embed in message.embeds:
+        parts.append(embed.description or "")
+        parts.append(embed.title or "")
+        for field in embed.fields:
+            parts.append(field.name or "")
+            parts.append(field.value or "")
+    parts.extend(component_texts)
+    text = "\n".join(parts)
+
     print(
         f"[giveaways] message from configured giveaway bot in #{message.channel}: "
-        f"title={embed.title!r} description={embed.description!r} "
-        f"fields={[(f.name, f.value) for f in embed.fields]!r}"
+        f"embeds={[(e.title, e.description, [(f.name, f.value) for f in e.fields]) for e in message.embeds]!r} "
+        f"components_text={component_texts!r}"
     )
 
-    parsed = _extract_prize_and_winners(embed)
+    parsed = _extract_prize_and_winners(text)
     if parsed is None:
-        print("[giveaways] no JC-prize amount and/or winner mention found in that embed — skipping.")
-        return False  # not a JC prize (or not a result embed) — leave it alone
+        print("[giveaways] no JC-prize amount and/or winner mention found in that message — skipping.")
+        return False  # not a JC prize (or not a result message) — leave it alone
 
     if await db.is_giveaway_processed(message.id):
         return True  # already paid out, e.g. a duplicate gateway delivery
