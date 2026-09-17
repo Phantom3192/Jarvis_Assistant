@@ -192,18 +192,36 @@ async def check_message(bot, message: discord.Message) -> bool:
         (paid if ok else failed).append(name)
 
     if paid:
-        lines = [f"{emoji.CELEBRATE} **Reward distributed!**"]
-        lines.append(
-            f"{', '.join(paid)} — {amount:,} {emoji.JC} {emoji.JC_NAME}{'s' if amount != 1 else ''} each, sent straight to your balance."
+        embed = discord.Embed(
+            title=f"{emoji.CELEBRATE} Reward Distributed!",
+            description=(
+                f"{', '.join(paid)} — **{amount:,}** {emoji.JC} "
+                f"{emoji.JC_NAME}{'s' if amount != 1 else ''} each, sent straight to your balance."
+            ),
+            color=discord.Color.green(),
         )
         if failed:
-            lines.append(f"{emoji.WARNING} Couldn't reach the credit system for: {', '.join(failed)} — an admin may need to retry manually.")
-        await message.channel.send("\n".join(lines))
+            embed.add_field(
+                name=f"{emoji.WARNING} Delivery issue",
+                value=f"Couldn't reach the credit system for: {', '.join(failed)} — an admin may need to retry manually.",
+                inline=False,
+            )
+        first_winner = message.guild.get_member(winner_ids[0])
+        if first_winner:
+            embed.set_thumbnail(url=first_winner.display_avatar.url)
+        embed.set_footer(text="Jarvis Assistant • Giveaway Boat integration")
+        await message.channel.send(embed=embed)
     elif failed:
-        await message.channel.send(
-            f"{emoji.ERROR} Giveaway ended but the reward couldn't be sent for: {', '.join(failed)}. "
-            f"An admin may need to retry manually."
+        embed = discord.Embed(
+            title=f"{emoji.ERROR} Reward Delivery Failed",
+            description=(
+                f"Giveaway ended but the reward couldn't be sent for: {', '.join(failed)}. "
+                f"An admin may need to retry manually."
+            ),
+            color=discord.Color.red(),
         )
+        embed.set_footer(text="Jarvis Assistant • Giveaway Boat integration")
+        await message.channel.send(embed=embed)
 
     return True
 
