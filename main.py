@@ -14,6 +14,7 @@ import help_menu
 import emoji
 import automod
 import tickets
+import giveaways
 
 intents = discord.Intents.default()
 intents.members = True
@@ -44,9 +45,14 @@ help_menu.setup_help(bot, OWNER_ID)
 # -setautomodlogchannel (owner only) — see automod.py.
 automod.setup(bot, OWNER_ID)
 
-# Registers -setticketstaffrole / -ticketclaimconfig (owner only) and
-# /claimticket, /unclaimticket (staff/admin) — see tickets.py.
+# Registers -setticketstaffrole / -ticketclaimperms / -ticketclaimconfig
+# (owner only) and /claimticket, /unclaimticket (staff/admin) — see tickets.py.
 tickets.setup(bot, OWNER_ID)
+
+# Registers -setgiveawaybot / -setgiveawaychannel / -giveawayconfig
+# (owner only) — see giveaways.py. Auto-reward logic itself runs from
+# on_message below, no further wiring needed here.
+giveaways.setup(bot, OWNER_ID)
 
 
 def is_owner():
@@ -109,6 +115,12 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
 
 @bot.event
 async def on_message(message: discord.Message):
+    # Giveaway Boat result auto-reward — see giveaways.py. If this was a
+    # JC-prize result it already handled (rewarded + confirmed in-channel),
+    # skip the rest (quest tracking etc. don't apply to a bot's message).
+    if await giveaways.check_message(bot, message):
+        return
+
     # Image automod — see automod.py. If this message contained a banned
     # image, it's already been deleted and the author timed out, so skip
     # quest tracking / box drops / command parsing on it entirely.
@@ -410,6 +422,7 @@ async def main():
     await vanity.load_config_from_db()
     await automod.load_config_from_db()
     await tickets.load_config_from_db()
+    await giveaways.load_config_from_db()
 
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
