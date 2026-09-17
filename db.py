@@ -130,6 +130,14 @@ async def init_db():
         )
         """
     )
+    await client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_giveaways (
+            message_id   TEXT PRIMARY KEY,
+            processed_at REAL NOT NULL
+        )
+        """
+    )
 
     # Migrations: vanity_data existed before these columns were added.
     # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so
@@ -534,6 +542,25 @@ async def unclaim_ticket(channel_id: int) -> bool:
         return False
     await client.execute("DELETE FROM claimed_tickets WHERE channel_id = ?", [str(channel_id)])
     return True
+
+
+# ---------------------------------------------------------------------------
+# Giveaway reward dedupe (/giveaways.py)
+# ---------------------------------------------------------------------------
+
+async def is_giveaway_processed(message_id: int) -> bool:
+    client = get_client()
+    rs = await client.execute("SELECT 1 FROM processed_giveaways WHERE message_id = ?", [str(message_id)])
+    return bool(rs.rows)
+
+
+async def mark_giveaway_processed(message_id: int) -> None:
+    client = get_client()
+    await client.execute(
+        "INSERT INTO processed_giveaways (message_id, processed_at) VALUES (?, ?) "
+        "ON CONFLICT(message_id) DO NOTHING",
+        [str(message_id), time.time()],
+    )
 
 
 async def close():
